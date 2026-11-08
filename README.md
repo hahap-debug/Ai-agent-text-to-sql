@@ -1,0 +1,1 @@
+# Human-natural-language-to-SQL-with-gemini

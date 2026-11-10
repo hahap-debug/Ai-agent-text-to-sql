@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "ecommerce-db": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\ACER\\Desktop\\Agent_natural_langauge_to_sql\\mcp_server\\server.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}

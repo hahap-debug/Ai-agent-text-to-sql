@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load .env file
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
 
 class Config:
     # Database Settings
@@ -35,8 +35,8 @@ class Config:
     
     # Ollama Settings
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
-    OLLAMA_SQL_MODEL = os.getenv("OLLAMA_SQL_MODEL", "qwen2.5-coder:3b")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
+    OLLAMA_SQL_MODEL = os.getenv("OLLAMA_SQL_MODEL", "qwen2.5-coder:7b")
     OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.0"))
     OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "600"))  # 10 minutes timeout
     MAX_LLM_RETRIES = int(os.getenv("MAX_LLM_RETRIES", "2"))
@@ -47,9 +47,9 @@ class Config:
 
     # Agent Limits & Safety
     MAX_REACT_STEPS = int(os.getenv("MAX_REACT_STEPS", "6"))
-    MAX_RESULT_ROWS = int(os.getenv("MAX_RESULT_ROWS", "100"))
+    MAX_RESULT_ROWS = int(os.getenv("MAX_RESULT_ROWS", "1000"))
     MAX_SQL_ROWS_RETURNED = MAX_RESULT_ROWS
-    DEFAULT_ROW_LIMIT = int(os.getenv("DEFAULT_ROW_LIMIT", "50"))
+    DEFAULT_ROW_LIMIT = int(os.getenv("DEFAULT_ROW_LIMIT", "1000"))
     SQL_TIMEOUT_SECONDS = int(float(os.getenv("QUERY_TIMEOUT_SECONDS", "5.0")))
 
     @classmethod

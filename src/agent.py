@@ -102,6 +102,79 @@ class DatabaseAgent:
         self.gemini_client = None
         self._init_providers()
 
+    @staticmethod
+    def _is_quota_error(e: Exception) -> bool:
+        """Checks if exception is a Gemini Quota Exceeded / Rate Limit error (429 / RESOURCE_EXHAUSTED)."""
+        msg = str(e).lower()
+        return any(keyword in msg for keyword in [
+            "resource_exhausted",
+            "429",
+            "quota",
+            "rate limit",
+            "rate_limit",
+            "exhausted",
+            "too many requests",
+            "quotaexceeded"
+        ])
+
+    @staticmethod
+    def filter_display_fields(rows: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+        """
+        Post-Execution Field Filtering Rule:
+        Filters out internal/system clutter (e.g. id, *_id, password_hash, created_at,
+        updated_at, slug, sort_order, alt_text) from query results before presenting to user/UI.
+        Leaves only pure business fields (names, prices, metrics, descriptions).
+        """
+        if not rows or not isinstance(rows, list):
+            return rows
+
+        EXACT_DROP = {
+            "id", "password_hash", "remember_token", "auth_token", "secret", "salt",
+            "created_at", "updated_at", "added_at", "performed_at", "sent_at",
+            "slug", "sort_order", "alt_text"
+        }
+
+        filtered = []
+        for row in rows:
+            if not isinstance(row, dict):
+                filtered.append(row)
+                continue
+
+            clean_row = {}
+            for col, val in row.items():
+                col_l = col.lower()
+                # 1. Exact drop
+                if col_l in EXACT_DROP:
+                    continue
+                # 2. Foreign keys ending with '_id' (e.g., user_id, product_id, order_id)
+                if col_l.endswith("_id"):
+                    continue
+                clean_row[col] = val
+
+            # Safety Guard: If row was stripped completely, restore non-sensitive columns
+            if not clean_row and row:
+                clean_row = {k: v for k, v in row.items() if k.lower() != "password_hash"}
+
+            filtered.append(clean_row)
+
+        return filtered
+
+    @staticmethod
+    def sanitize_sql_limits(sql: str, question: str) -> str:
+        """
+        Fixed Rule: หาก user ไม่ได้ใส่จำนวนหรือตัวเลขที่ต้องการระบุชัดเจน (เช่น 5 คน, Top 10, 3 อันดับ)
+        คำสั่ง SQL ต้อง return ข้อมูลทั้งหมด (ตัด LIMIT ออกอัตโนมัติ)
+        """
+        if not sql:
+            return sql
+        q_low = question.lower()
+        has_explicit_count = bool(re.search(r'\b\d+\b', q_low)) or any(w in q_low for w in ['อันดับ', 'top', 'คนแรก', 'ชิ้นแรก', 'รายการแรก'])
+
+        # หากไม่ได้ใส่จำนวนที่ต้องการ ต้องคืนค่าทั้งหมด (ลบ LIMIT ออก)
+        if not has_explicit_count:
+            return re.sub(r'\s+LIMIT\s+\d+(\s*,\s*\d+)?\s*;?$', ';', sql.strip(), flags=re.IGNORECASE)
+        return sql
+
     def _init_providers(self):
         """Initializes Gemini client if configured."""
         if self.provider == "gemini" and self.api_key and self.api_key != "your_gemini_api_key_here":
@@ -247,6 +320,8 @@ class DatabaseAgent:
 
         res.user_question = user_question
         res.expanded_question = expanded if (expanded and expanded != user_question) else None
+        if res.last_query_result:
+            res.last_query_result = self.filter_display_fields(res.last_query_result)
         return res
 
     # -------------------------------------------------------------
@@ -406,8 +481,10 @@ class DatabaseAgent:
                             messages.append({"role": "tool", "content": obs_str})
                     elif fn_name == "execute_sql":
                         sql_query = fn_args.get("query", "")
-                        last_sql = sql_query
-                        exec_res = self.execute_sql(sql_query)
+                        clean_sql = self.sanitize_sql_limits(sql_query, user_question)
+                        last_sql = clean_sql
+                        step.parameters = {"query": clean_sql}
+                        exec_res = self.execute_sql(clean_sql)
                         if exec_res.get("status") == "success":
                             last_result = exec_res.get("rows", [])
                             step.observation = exec_res.get("rows", [])
@@ -499,13 +576,14 @@ class DatabaseAgent:
             return obs_str
 
         def execute_sql(query: str) -> str:
-            last_sql_box["sql"] = query
-            exec_res = self.execute_sql(query)
+            clean_query = self.sanitize_sql_limits(query, user_question)
+            last_sql_box["sql"] = clean_query
+            exec_res = self.execute_sql(clean_query)
             step = AgentStep(
                 step_number=len(steps) + 1,
                 thought="ส่งคำสั่ง SQL ที่ผ่านการตรวจสอบไวยากรณ์ไปรันบนฐานข้อมูล ecommerce_db",
                 tool_name="execute_sql",
-                parameters={"query": query}
+                parameters={"query": clean_query}
             )
             if exec_res.get("status") == "success":
                 rows = exec_res.get("rows", [])
@@ -520,36 +598,50 @@ class DatabaseAgent:
             return json.dumps(exec_res, ensure_ascii=False)
 
         tools = [inspect_schema, execute_sql]
-
-        chat = self.gemini_client.chats.create(
-            model=self.model_name,
-            config=types.GenerateContentConfig(
-                system_instruction=MASTER_SYSTEM_PROMPT,
-                tools=tools,
-                temperature=0.1
-            )
-        )
-
-        # Multi-Turn: Send previous context summary if chat_history exists
-        if chat_history:
-            for item in chat_history[-2:]:
-                if item.get("role") == "user":
-                    chat.send_message(f"[บริบทคำถามก่อนหน้า]: {item.get('content')}")
-                elif item.get("role") == "assistant":
-                    asst_summary = item.get("content", "")[:250]
-                    sql_info = f" [SQL ที่เคยรัน: {item.get('sql')}]" if item.get("sql") else ""
-                    chat.send_message(f"[ผลลัพธ์บริบทก่อนหน้า]: {asst_summary}{sql_info}")
+        quota_exceeded = False
+        error_details = None
 
         try:
+            chat = self.gemini_client.chats.create(
+                model=self.model_name,
+                config=types.GenerateContentConfig(
+                    system_instruction=MASTER_SYSTEM_PROMPT,
+                    tools=tools,
+                    temperature=0.1
+                )
+            )
+
+            # Multi-Turn: Send previous context summary if chat_history exists
+            if chat_history:
+                for item in chat_history[-2:]:
+                    if item.get("role") == "user":
+                        chat.send_message(f"[บริบทคำถามก่อนหน้า]: {item.get('content')}")
+                    elif item.get("role") == "assistant":
+                        asst_summary = item.get("content", "")[:250]
+                        sql_info = f" [SQL ที่เคยรัน: {item.get('sql')}]" if item.get("sql") else ""
+                        chat.send_message(f"[ผลลัพธ์บริบทก่อนหน้า]: {asst_summary}{sql_info}")
+
             response = chat.send_message(user_question)
             final_text = getattr(response, "text", "") or ""
         except Exception as e:
-            final_text = ""
+            if self._is_quota_error(e):
+                quota_exceeded = True
+                error_details = str(e)
+                final_text = (
+                    "⚠️ **Ran out of quota:** โควตาการใช้งานของ Google Gemini API หมดแล้ว (Rate Limit / Quota Exceeded)\n\n"
+                    "ระบบไม่สามารถเรียกใช้ Gemini ได้ในขณะนี้เนื่องจากติดโควตาคำขอฟรีหรือถึงขีดจำกัดของบัญชี (429 RESOURCE_EXHAUSTED)\n\n"
+                    "💡 **คำแนะนำในการใช้งานต่อ:**\n"
+                    "- สลับไปใช้ **🖥️ Local Ollama (`qwen2.5-coder:7b`)** ที่แถบเมนูด้านซ้าย (รันบนเครื่อง 100% ไม่มีข้อจำกัดโควตา)\n"
+                    "- หรือรอประมาณ 1-2 นาทีเพื่อให้อัตราโควตารีเซ็ต แล้วลองส่งคำถามใหม่อีกครั้ง"
+                )
+            else:
+                final_text = f"❌ เกิดข้อผิดพลาดในการประมวลผลผ่าน Gemini: {e}"
+                error_details = str(e)
 
         last_sql = last_sql_box["sql"]
         last_result = last_sql_box["result"]
 
-        if ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
+        if not quota_exceeded and ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
             final_text = self._format_thai_narrative(user_question, last_sql or "", last_result)
 
         return AgentRunResult(
@@ -558,7 +650,8 @@ class DatabaseAgent:
             steps=steps,
             last_executed_sql=last_sql,
             last_query_result=last_result,
-            success=True if (last_result is not None or final_text) else False
+            success=False if quota_exceeded or error_details else (True if (last_result is not None or final_text) else False),
+            error_message="Ran out of quota (Gemini 429 RESOURCE_EXHAUSTED)" if quota_exceeded else error_details
         )
 
     # -------------------------------------------------------------
@@ -812,8 +905,7 @@ JOIN products p ON oi.product_id = p.id
 LEFT JOIN addresses a ON u.id = a.user_id
 LEFT JOIN countries c ON a.country_id = c.id
 GROUP BY u.id, u.first_name, u.last_name, c.name, p.id, p.name
-ORDER BY customer_name, total_spent DESC
-LIMIT 50;"""
+ORDER BY customer_name, total_spent DESC;"""
             else:
                 concat_expr = "(u.first_name || ' ' || u.last_name)"
                 sql = f"""SELECT {concat_expr} AS customer_name,
@@ -827,8 +919,7 @@ JOIN order_items oi ON o.order_id = oi.order_id
 JOIN products p ON oi.product_id = p.product_id
 LEFT JOIN addresses a ON u.user_id = a.user_id
 GROUP BY u.user_id, u.first_name, u.last_name, a.country, p.product_id, p.product_name
-ORDER BY customer_name, total_spent DESC
-LIMIT 50;"""
+ORDER BY customer_name, total_spent DESC;"""
 
             s2 = AgentStep(
                 step_number=2,
@@ -936,9 +1027,9 @@ LIMIT 50;"""
             if step_callback: step_callback(s1)
 
             if self.db.is_mysql:
-                sql = "SELECT id, first_name, last_name, email, phone, created_at FROM users ORDER BY id ASC LIMIT 20;"
+                sql = "SELECT id, first_name, last_name, email, phone, created_at FROM users ORDER BY id ASC;"
             else:
-                sql = "SELECT user_id, first_name, last_name, email, phone, created_at FROM users ORDER BY user_id ASC LIMIT 20;"
+                sql = "SELECT user_id, first_name, last_name, email, phone, created_at FROM users ORDER BY user_id ASC;"
 
             s2 = AgentStep(
                 step_number=2,

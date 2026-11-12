@@ -64,6 +64,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "db" not in st.session_state:
     st.session_state.db = DatabaseConnection()
+if "selected_provider" not in st.session_state:
+    st.session_state.selected_provider = "ollama"
 
 db = st.session_state.db
 
@@ -80,73 +82,30 @@ with st.sidebar:
         st.error(f"❌ {db_msg}")
         st.info("ตรวจสอบค่าการเชื่อมต่อใน `.env`")
 
-    tables = db.get_available_tables()
-    st.caption(f"พบตารางทั้งหมดใน `ecommerce_db`: **{len(tables)}** ตาราง")
-
     st.divider()
 
     # LLM Settings
     st.subheader("สมองกล AI (LLM Provider)")
     provider_choice = st.radio(
         "เลือก Engine ในการประมวลผล:",
-        ["ollama", "gemini", "mock"],
-        index=0 if Config.LLM_PROVIDER == "ollama" else (1 if Config.LLM_PROVIDER == "gemini" else 2),
+        ["ollama", "gemini"],
+        index=0,
         format_func=lambda x: {
-            "ollama": "🖥️ Local Ollama (qwen2.5:3b)",
-            "gemini": "☁️ Google Gemini API",
-            "mock": "⚡ Fast Auto-ReAct Engine"
-        }.get(x, x)
+            "ollama": "🖥️ Local Ollama (qwen2.5-coder:7b)",
+            "gemini": "☁️ Google Gemini (gemini-3.5-flash)"
+        }.get(x, x),
+        key="selected_provider"
     )
 
     if provider_choice == "ollama":
-        model_choice = st.selectbox(
-            "Ollama Model",
-            ["qwen2.5:3b", "qwen2.5-coder:3b"],
-            index=0
-        )
+        model_choice = "qwen2.5-coder:7b"
         api_key_input = None
-        st.caption("🟢 รัน Offline ผ่าน Ollama บน localhost:11434")
-    elif provider_choice == "gemini":
-        api_key_input = st.text_input(
-            "Gemini API Key",
-            value=Config.GEMINI_API_KEY if Config.is_gemini_available() else "",
-            type="password",
-            help="ป้อน Google Gemini API Key เพื่อเชื่อมต่อ Gemini"
-        )
-        gemini_model_options = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
-        if Config.GEMINI_MODEL and Config.GEMINI_MODEL not in gemini_model_options:
-            gemini_model_options.insert(0, Config.GEMINI_MODEL)
-        model_choice = st.selectbox(
-            "Gemini Model",
-            gemini_model_options,
-            index=0
-        )
-        if api_key_input:
-            st.success("🟢 พร้อมใช้งาน Gemini")
-        else:
-            st.warning("🟡 กรุณาใส่ API Key สำหรับ Gemini")
     else:
-        api_key_input = None
-        model_choice = "mock"
-        st.info("⚡ วิเคราะห์คำถามและสืบค้นข้อมูลจาก MySQL ทันที")
+        model_choice = "gemini-3.5-flash"
+        api_key_input = Config.GEMINI_API_KEY
 
-    st.divider()
-
-    # Schema Explorer
-    st.subheader("🔍 Schema Explorer (โครงสร้างตาราง)")
-    if tables:
-        selected_table = st.selectbox("เลือกตารางที่ต้องการตรวจสอบ:", tables)
-        if st.button("สแกนโครงสร้างตาราง (Inspect)"):
-            schema_data = db.inspect_schema([selected_table])
-            t_data = schema_data.get(selected_table, {})
-            if "columns" in t_data:
-                col_df = pd.DataFrame(t_data["columns"])
-                st.dataframe(col_df, use_container_width=True)
-                if t_data.get("foreign_keys"):
-                    st.write("**Foreign Keys:**")
-                    st.json(t_data["foreign_keys"])
-            elif "error" in t_data:
-                st.error(t_data["error"])
+    # Current Active Model indicator
+    st.info(f"🤖 **โมเดลที่ใช้งานอยู่ (Active Model):**\n\n`{model_choice}`")
 
     st.divider()
     if st.button("🗑️ ล้างประวัติการแชต (Clear Chat)"):
@@ -161,33 +120,81 @@ st.markdown("""
 """)
 
 # Quick Stat Badges
-col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+# ----------------- MAIN CONTENT LAYOUT -----------------
+st.title("🤖 E-Commerce AI Data Analytics Agent")
+st.markdown("""
+ระบบเอเจนต์วิเคราะห์ข้อมูลอัจฉริยะสำหรับฐานข้อมูล **`ecommerce_db`**
+ขับเคลื่อนด้วย **ReAct Reasoning** (Thought ➔ Action ➔ Observation) • **AST‑Safe Read‑Only Guard** • **Self‑Correction Loop**
+""")
+
+# สถิติสำคัญ
+col_m1, col_m2 = st.columns(2)
 with col_m1:
     st.metric(label="ฐานข้อมูล", value="ecommerce_db", delta="Active (MySQL)")
 with col_m2:
-    st.metric(label="ตารางที่รองรับ", value=f"{len(tables)} ตาราง")
-with col_m3:
-    st.metric(label="โหมดการทำงาน", value=provider_choice.upper())
-with col_m4:
-    st.metric(label="ความปลอดภัย", value="Read-Only", delta="AST Verified")
+    st.metric(label="โหมดการทำงาน", value=provider_choice.upper(), delta=model_choice)
+
+# ขอบเขต Business Domain ที่สามารถถามได้
+with st.expander("🧭 ขอบเขตข้อมูลเชิงธุรกิจที่ระบบสามารถตอบได้ (Business Domains - ครอบคลุม 31 ตาราง)", expanded=True):
+    d_col1, d_col2, d_col3 = st.columns(3)
+    with d_col1:
+        st.markdown("""
+        **🛍️ ยอดขาย & คำสั่งซื้อ**
+        * มูลค่ายอดขายรวม, สินค้าขายดี
+        * สถานะออเดอร์, ประวัติการซื้อ
+        
+        **👥 ข้อมูลลูกค้า**
+        * รายชื่อลูกค้า, ที่อยู่/ประเทศ
+        * พฤติกรรมการสั่งซื้อ, ลูกค้าประจำ
+        
+        **🏢 ซัพพลายเออร์ & ผู้ผลิต**
+        * ข้อมูลคู่ค้า, ผู้จัดหาสินค้า
+        """)
+    with d_col2:
+        st.markdown("""
+        **📦 สินค้า & สต็อก**
+        * สเปกสินค้า, รูปภาพ, แบรนด์, หมวดหมู่
+        * ระดับสต็อกคงเหลือในแต่ละคลัง
+        
+        **🚚 ส่งของ & จัดส่ง**
+        * ผู้ให้บริการขนส่ง, เลข Tracking
+        * วิธีการจัดส่ง, ค่าจัดส่ง
+        
+        **🛒 ตะกร้าสินค้า & Wishlist**
+        * สินค้าที่ค้างในตะกร้า, สินค้าที่อยากได้
+        """)
+    with d_col3:
+        st.markdown("""
+        **⭐ รีวิว & ความพึงพอใจ**
+        * คะแนนดาว (1-5 ดาว), ข้อเสนอแนะ
+        
+        **🔄 การคืนสินค้า & เคลม**
+        * สินค้าที่ถูกคืน, เหตุผลการยกเลิก
+        
+        **🎟️ คูปอง, ภาษี & การเงิน**
+        * การใช้ส่วนลด, ช่องทางชำระเงิน, อัตราภาษี
+        
+        **💬 ฝ่ายบริการลูกค้า**
+        * ตั๋วแจ้งปัญหา, ข้อความประสานงาน
+        """)
 
 st.write("")
 
 # Quick prompt chips
 st.write("💡 **ตัวอย่างคำถามวิเคราะห์ธุรกิจยอดนิยม (คลิกเพื่อทดสอบทันที):**")
-col1, col2, col3, col4 = st.columns(4)
+btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
 quick_prompt = None
 
-if col1.button("👥 ข้อมูลลูกค้าทั้งหมด", use_container_width=True):
+if btn_col1.button("👥 ข้อมูลลูกค้าทั้งหมด", use_container_width=True):
     quick_prompt = "ขอข้อมูลลูกค้าทั้งหมดหน่อย"
 
-if col2.button("🏆 แบรนด์ยอดขายสูงสุด", use_container_width=True):
+if btn_col2.button("🏆 แบรนด์ยอดขายสูงสุด", use_container_width=True):
     quick_prompt = "ช่วงนี้สินค้าแบรนด์ไหนขายดีที่สุด 5 อันดับแรก และมียอดขายรวมเท่าไหร่"
 
-if col3.button("🛍️ ลูกค้าแต่ละคนซื้ออะไร", use_container_width=True):
+if btn_col3.button("🛍️ ลูกค้าแต่ละคนซื้ออะไร", use_container_width=True):
     quick_prompt = "ลูกค้าแต่ละคน ซื้อของอะไรบ้าง"
 
-if col4.button("🌍 ซื้ออะไร & มาจากประเทศไหน", use_container_width=True):
+if btn_col4.button("🌍 ซื้ออะไร & มาจากประเทศไหน", use_container_width=True):
     quick_prompt = "ลูกค้าแต่ละคน ซื้อของอะไรบ้าง และมาจากประเทศไหน"
 
 # Benchmark Test Set Expander
@@ -205,6 +212,8 @@ with st.expander("🧪 ชุดคำถามทดสอบระบบมา
 # Display chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
+        if msg.get("expanded_question"):
+            st.caption(f"🔗 **บริบทคำถามต่อเนื่อง:** *\"{msg['expanded_question']}\"*")
         st.markdown(msg["content"])
         
         # SQL Code Expander
@@ -294,7 +303,8 @@ if prompt_to_run:
 
             result = agent.run(
                 prompt_to_run,
-                step_callback=live_step_callback
+                step_callback=live_step_callback,
+                chat_history=st.session_state.messages[:-1] if len(st.session_state.messages) > 1 else None
             )
             
             if result.success:
@@ -304,8 +314,9 @@ if prompt_to_run:
                     expanded=False
                 )
             else:
+                is_quota = "quota" in (result.error_message or "").lower() or "ran out of quota" in (result.final_answer or "").lower()
                 status_box.update(
-                    label="⚠️ สิ้นสุดการประมวลผล",
+                    label="⚠️ Gemini API: Ran out of quota (โควตาเต็ม)" if is_quota else "⚠️ สิ้นสุดการประมวลผล",
                     state="error",
                     expanded=True
                 )
@@ -329,6 +340,8 @@ if prompt_to_run:
                     st.bar_chart(df.set_index(text_cols[0])[num_cols[0]])
 
         # Show Final Business Report
+        if result.expanded_question:
+            st.caption(f"🔗 **บริบทคำถามต่อเนื่อง:** *\"{result.expanded_question}\"*")
         st.markdown(result.final_answer)
 
         # Record to chat history
@@ -337,6 +350,7 @@ if prompt_to_run:
             "content": result.final_answer,
             "sql": result.last_executed_sql,
             "rows": result.last_query_result,
+            "expanded_question": result.expanded_question,
             "steps": [
                 {
                     "step_number": s.step_number,

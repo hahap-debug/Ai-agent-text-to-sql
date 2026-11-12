@@ -180,4 +180,94 @@ def test_agent_coreference_country_followup(agent):
     assert "country" in t2.last_executed_sql.lower()
     assert "สรุปผลลัพธ์สำคัญ" in t2.final_answer
 
+def test_gemini_quota_exceeded_error_handling(agent):
+    """Test: When Gemini reaches limit/quota, return 'ran out of quota' gracefully."""
+    from unittest.mock import MagicMock
+    from src.agent import DatabaseAgent
+
+    gemini_agent = DatabaseAgent(db=agent.db, provider="gemini", api_key="fake-key-for-test")
+    # Mock gemini_client to raise 429 Resource Exhausted
+    mock_client = MagicMock()
+    mock_client.chats.create.side_effect = Exception("google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED. Quota exceeded for quota metric 'Generate Content API Requests'.")
+    gemini_agent.gemini_client = mock_client
+
+    result = gemini_agent.run("แบรนด์ไหนขายดีที่สุด 5 อันดับ")
+    assert result.success is False
+    assert "ran out of quota" in result.final_answer.lower()
+    assert "ollama" in result.final_answer.lower()
+    assert "quota" in result.error_message.lower()
+
+def test_filter_display_fields_unit():
+    """Unit test for post-execution field filtering rule."""
+    from src.agent import DatabaseAgent
+
+    raw_data = [
+        {
+            "id": 1,
+            "user_id": 1,
+            "first_name": "Somchai",
+            "last_name": "Jaidee",
+            "email": "somchai@mail.com",
+            "password_hash": "$2y$10$abcdef123456",
+            "created_at": "2026-01-01 10:00:00",
+            "updated_at": "2026-01-02 11:00:00",
+            "slug": "somchai-jaidee",
+            "sort_order": 1,
+            "alt_text": "avatar"
+        }
+    ]
+
+    clean = DatabaseAgent.filter_display_fields(raw_data)
+    assert len(clean) == 1
+    row = clean[0]
+    # Check dropped fields
+    assert "id" not in row
+    assert "user_id" not in row
+    assert "password_hash" not in row
+    assert "created_at" not in row
+    assert "updated_at" not in row
+    assert "slug" not in row
+    assert "sort_order" not in row
+    assert "alt_text" not in row
+
+    # Check preserved business fields
+    assert row["first_name"] == "Somchai"
+    assert row["last_name"] == "Jaidee"
+    assert row["email"] == "somchai@mail.com"
+
+def test_filter_display_fields_safety_guard():
+    """Ensure safety guard prevents empty rows if only ID was selected."""
+    from src.agent import DatabaseAgent
+    raw_id_only = [{"id": 42}]
+    clean = DatabaseAgent.filter_display_fields(raw_id_only)
+    assert len(clean) == 1
+    assert clean[0]["id"] == 42
+
+def test_sanitize_sql_limits():
+    """Verify that unrequested LIMIT clauses are stripped when user asks for 'ทั้งหมด' or 'แต่ละคน'."""
+    from src.agent import DatabaseAgent
+    
+    # Case 1: All data of each customer
+    s1 = DatabaseAgent.sanitize_sql_limits("SELECT * FROM users LIMIT 5;", "ขอดูข้อมูลทั้งหมดของลูกค้าแต่ละคน")
+    assert s1 == "SELECT * FROM users;"
+
+    # Case 2: All customers
+    s2 = DatabaseAgent.sanitize_sql_limits("SELECT * FROM users LIMIT 20;", "ขอข้อมูลลูกค้าทั้งหมดหน่อย")
+    assert s2 == "SELECT * FROM users;"
+
+    # Case 3: Each customer purchases
+    s3 = DatabaseAgent.sanitize_sql_limits("SELECT * FROM orders LIMIT 50;", "ลูกค้าแต่ละคน ซื้อของอะไรบ้าง")
+    assert s3 == "SELECT * FROM orders;"
+
+    # Case 4: Explicit count requested (Must KEEP LIMIT)
+    s4 = DatabaseAgent.sanitize_sql_limits("SELECT * FROM users LIMIT 5;", "ขอข้อมูลลูกค้า 5 คนแรก")
+    assert s4 == "SELECT * FROM users LIMIT 5;"
+
+    # Case 5: Top 5 brands (Must KEEP LIMIT)
+    s5 = DatabaseAgent.sanitize_sql_limits("SELECT * FROM brands LIMIT 5;", "แบรนด์ไหนขายดีที่สุด 5 อันดับแรก")
+    assert s5 == "SELECT * FROM brands LIMIT 5;"
+
+
+
+
 

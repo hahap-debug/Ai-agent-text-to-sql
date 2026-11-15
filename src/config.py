@@ -52,10 +52,10 @@ class Config:
     DEFAULT_ROW_LIMIT = int(os.getenv("DEFAULT_ROW_LIMIT", "1000"))
     SQL_TIMEOUT_SECONDS = int(float(os.getenv("QUERY_TIMEOUT_SECONDS", "5.0")))
 
-    @classmethod
+    @classmethod #Method นี้สามารถเข้าถึง Class ได้โดยตรง โดยไม่จำเป็นต้องสร้าง Object ก่อน
     def is_api_key_set(cls) -> bool:
         return cls.is_gemini_available()
 
-    @classmethod
+    @classmethod #Method นี้สามารถเข้าถึง Class ได้โดยตรง โดยไม่จำเป็นต้องสร้าง Object ก่อน
     def is_gemini_available(cls) -> bool:
         return bool(cls.GEMINI_API_KEY and cls.GEMINI_API_KEY != "your_gemini_api_key_here")

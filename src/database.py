@@ -52,6 +52,18 @@ class DatabaseConnection:
     def get_connection(self):
         """Creates and returns a new connection based on configured DB_TYPE with auto-fallback."""
         if self.db_type == "mysql" and not self.fallback_active:
+            import socket
+            try:
+                with socket.create_connection((self.host, self.port), timeout=1.0):
+                    pass
+            except Exception as se:
+                if self.auto_fallback:
+                    self.fallback_active = True
+                    conn = sqlite3.connect(self.sqlite_path, timeout=Config.SQL_TIMEOUT_SECONDS)
+                    conn.row_factory = sqlite3.Row
+                    return conn
+                raise se
+
             try:
                 return pymysql.connect(
                     host=self.host,
@@ -61,7 +73,7 @@ class DatabaseConnection:
                     database=self.database,
                     charset=Config.DB_CHARSET,
                     cursorclass=pymysql.cursors.DictCursor,
-                    connect_timeout=Config.SQL_TIMEOUT_SECONDS,
+                    connect_timeout=3 if self.auto_fallback else Config.SQL_TIMEOUT_SECONDS,
                     autocommit=True
                 )
             except Exception as e:
@@ -81,6 +93,11 @@ class DatabaseConnection:
     @property
     def is_mysql(self) -> bool:
         return self.db_type == "mysql" and not self.fallback_active
+
+    def is_connected(self) -> bool:
+        """Returns True if database is reachable (either MySQL or SQLite fallback)."""
+        ok, _ = self.test_connection()
+        return ok
 
     def test_connection(self) -> Tuple[bool, str]:
         """Verify database connectivity."""

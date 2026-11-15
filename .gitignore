@@ -22,11 +22,7 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-test_query.py
 MANIFEST
-*.bat
-run_web.ps1
-tests/
 
 # ===================================================
 # Virtual Environments

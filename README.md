@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# Natural-language-with-gemini
-=======
 # 🚀 E-Commerce AI Data Analytics Agent (Powered by Google Gemini & MCP)
 
 > **ระบบเอเจนต์วิเคราะห์ข้อมูลอัจฉริยะระดับองค์กร ขับเคลื่อนด้วยขุมพลัง Google Gemini**  
@@ -57,39 +54,48 @@
 
 ---
 
-## 📌 สถาปัตยกรรมและการทำงาน (Architecture & Key Features)
+## 📌 สถาปัตยกรรมระดับองค์กร (N-Tier Enterprise Architecture)
 
-```
-+-----------------------------------------------------------------------------------+
-|                        User Question (ภาษาธรรมชาติภาษาไทย)                          |
-+-----------------------------------------------------------------------------------+
-                                          |
-                                          v
-+-----------------------------------------------------------------------------------+
-|                           Google Gemini Brain (ReAct Loop)                        |
-|                                                                                   |
-|  1. Thought: วิเคราะห์เจตนาทางธุรกิจ เลือกตารางที่เกี่ยวข้องจาก Catalog                 |
-|  2. Action: inspect_schema(tables=[...]) ตรวจสอบคอลัมน์และ Foreign Keys จริง      |
-|  3. Observation: โครงสร้างคอลัมน์, Data Types, Primary & Foreign Keys             |
-|  4. Thought: ร่าง MySQL Query 8.x ปลอดภัยตามกฎ ONLY_FULL_GROUP_BY                 |
-|  5. Action: execute_sql(query="SELECT ...") ➔ ผ่าน AST Safety Guard              |
-|  6. Observation: ผลลัพธ์ข้อมูลจาก MySQL (หรือ Error หากมี เพื่อทำ Self-Healing)    |
-+-----------------------------------------------------------------------------------+
-                                          |
-                                          v
-+-----------------------------------------------------------------------------------+
-|                         Final Executive Business Report                           |
-|  📊 1. สรุปผลลัพธ์สำคัญ (Executive Summary): ตัวเลขหลักและประเด็นสำคัญ            |
-|  🔍 2. ข้อมูลเชิงลึกและแนวโน้ม (Key Insights): วิเคราะห์ความหมายทางธุรกิจ          |
-|  🎯 3. ข้อเสนอแนะเชิงกลยุทธ์ (Actionable Next Steps): สิ่งที่ควรดำเนินการต่อ       |
-+-----------------------------------------------------------------------------------+
+ระบบได้รับการออกแบบตามมาตรฐาน **4-Tier Architecture** เพื่อแยกส่วนความรับผิดชอบ (Separation of Concerns), เพิ่มความปลอดภัย และรองรับการขยายตัว (Scalability):
+
+```text
++---------------------------------------------------------------------------------------------------+
+|  [TIER 1: PRESENTATION LAYER (Clients & Interfaces)]                                              |
+|  • Streamlit Web Dashboard (Port 8501)       • Interactive Terminal CLI (cli.py)                  |
+|  • External AI Agents via MCP Server         • AgentAPIClient Python SDK (src/api/client.py)       |
++---------------------------------------------------------------------------------------------------+
+                                                  |
+                     (HTTP REST / Server-Sent Events / SSE Streaming / stdio)
+                                                  v
++---------------------------------------------------------------------------------------------------+
+|  [TIER 2: APPLICATION SERVICE & API GATEWAY LAYER] (FastAPI Port 8000)                             |
+|  • OpenAPI / Swagger UI (/docs)              • Server-Sent Events (SSE) Live Reasoning Stream     |
+|  • Pydantic Request/Response DTO Validation  • Cross-Origin Resource Sharing (CORS) Middleware    |
++---------------------------------------------------------------------------------------------------+
+                                                  |
+                                                  v
++---------------------------------------------------------------------------------------------------+
+|  [TIER 3: DOMAIN LOGIC & AI AGENT CORE] (src/agent/)                                               |
+|  • ReAct Loop Orchestrator (core.py)         • Google GenAI & Local Ollama Engines                |
+|  • Coreference Multi-turn Memory             • Business Narrative & Thai Executive Reporter       |
+|  • Privacy Guards & Limit Sanitization Rules • sqlglot AST SQL Safety Validator (Read-Only Guard) |
++---------------------------------------------------------------------------------------------------+
+                                                  |
+                                                  v
++---------------------------------------------------------------------------------------------------+
+|  [TIER 4: DATA ACCESS LAYER & PERSISTENCE] (src/database.py & MySQL / SQLite)                     |
+|  • DatabaseConnection Pool Manager           • Automatic Port Probe & Resilient Failover          |
+|  • MySQL 8.x (Primary: ecommerce_db)         • Local SQLite Fallback (Offline Benchmark Dev)      |
++---------------------------------------------------------------------------------------------------+
 ```
 
 ### ฟีเจอร์เด่นระดับโปรดักชัน:
-1. **Native Gemini Tool Calling:** ทำงานร่วมกับ API ของ Google GenAI โดยตรง ไม่ใช่การตัดต่อข้อความ ทำให้การเรียกใช้เครื่องมือเสถียรและรวดเร็ว
-2. **Entity Preservation & De-duplication:** Prompts ถูกออกแบบให้เข้าใจความสัมพันธ์ 1-to-Many โดยใช้ `LEFT JOIN` และ `COALESCE` เพื่อรักษาข้อมูลที่ยังไม่ระบุ (เช่น ลูกค้าที่ยังไม่กรอกที่อยู่) และใช้ `DISTINCT` ป้องกันข้อมูลเบิ้ลซ้ำ
-3. **Automated Self-Correction:** หากคิวรีติด Error หรือเจอตารางที่ซับซ้อน โมเดล Gemini จะนำ Error ไปวิเคราะห์และสร้าง SQL ชุดใหม่มาแก้ไขตัวเองทันทีภายใน 6 ขั้นตอน
-4. **Interactive Multi-Platform Support:** ไม่ผูกขาดกับหน้าเว็บเดียว แต่เปิดเป็น **MCP Server มาตรฐาน** ให้โปรแกรมอย่าง Claude Desktop นำไปใช้ได้ด้วย
+1. **N-Tier Decoupling:** แยกชั้น Presentation ออกจาก Agent Core อย่างสมบูรณ์ผ่าน FastAPI REST/SSE Tier รองรับการเชื่อมต่อจาก Web, Mobile, Line/Slack Bot หรือระบบภายนอก
+2. **Real-Time SSE Streaming:** รองรับ Server-Sent Events (`/api/v1/query/stream`) ส่งความคืบหน้าของ Agent Thought และ Tool Action กลับมาแสดงผลบน Client แบบเรียลไทม์
+3. **Native Gemini Tool Calling:** ทำงานร่วมกับ API ของ Google GenAI โดยตรง ไม่ใช่การตัดต่อข้อความ ทำให้การเรียกใช้เครื่องมือเสถียรและรวดเร็ว
+4. **Entity Preservation & De-duplication:** Prompts ถูกออกแบบให้เข้าใจความสัมพันธ์ 1-to-Many โดยใช้ `LEFT JOIN` และ `COALESCE` เพื่อรักษาข้อมูลที่ยังไม่ระบุ (เช่น ลูกค้าที่ยังไม่กรอกที่อยู่) และใช้ `DISTINCT` ป้องกันข้อมูลเบิ้ลซ้ำ
+5. **Automated Self-Correction:** หากคิวรีติด Error หรือเจอตารางที่ซับซ้อน โมเดล Gemini จะนำ Error ไปวิเคราะห์และสร้าง SQL ชุดใหม่มาแก้ไขตัวเองทันทีภายใน 6 ขั้นตอน
+6. **Interactive Multi-Platform Support:** ไม่ผูกขาดกับหน้าเว็บเดียว แต่เปิดเป็นทั้ง **FastAPI Service** และ **MCP Server มาตรฐาน** ให้โปรแกรมอย่าง Claude Desktop นำไปใช้ได้ด้วย
 
 ---
 
@@ -97,35 +103,60 @@
 
 ```text
 Agent_natural_langauge_to_sql/
-├── .env                         # ตั้งค่า Gemini API Key และ MySQL Credentials
+├── .env.example                 # แม่แบบการตั้งค่าสภาพแวดล้อม (Environment Template)
+├── .env                         # ตั้งค่า Gemini API Key และ MySQL Credentials (ส่วนตัว)
+├── .gitignore                   # กฎการละเว้นไฟล์ที่ไม่จำเป็นสำหรับ Git
 ├── AGENTS.md                    # ข้อกำหนดสถาปัตยกรรม ReAct Agent และ Specification
 ├── README.md                    # เอกสารคู่มือระบบและขอบเขตการทำงาน (ฉบับนี้)
 ├── requirements.txt             # รายการแพ็กเกจ Python ทั้งหมด
-├── app.py                       # Web Dashboard (Streamlit) แสดงผล ReAct Trace และชาร์ต
-├── cli.py                       # Interactive CLI สำหรับทดสอบถามตอบใน Terminal
-├── test_query.py                # เครื่องมือรันคำถามเดี่ยวและ Benchmark 10 คำถาม
-├── mcp_server/                  # 🔌 ระบบ MCP Server แยก Tool อิสระสำหรับ AI อื่น
-│   ├── server.py                # จุดรัน FastMCP Server (stdio transport)
-│   ├── config.py                # การตั้งค่า MySQL สำหรับ MCP Server
-│   ├── db.py                    # Helper จัดการ MySQL Connection
-│   ├── security.py              # AST Security Guardrail ป้องกันคำสั่งแก้ไขข้อมูล
-│   ├── test_mcp.py              # สคริปต์ทดสอบ Tool ทั้ง 3 ตัวของ MCP Server
-│   ├── claude_desktop_config.json # ไฟล์คอนฟิกพร้อมก๊อปปี้ไปวางใน Claude Desktop
-│   ├── README.md                # คู่มือการใช้งาน MCP Server
-│   └── tools/
-│       ├── catalog.py           # [Tool 1]: list_tables (ดูรายชื่อตารางและคำอธิบาย)
-│       ├── schema.py            # [Tool 2]: inspect_schema (ดูคอลัมน์, PK, FK)
-│       └── query.py             # [Tool 3]: execute_sql (รัน SELECT ปลอดภัย)
-├── src/
-│   ├── config.py                # โหลดค่า Config และกำหนด Gemini เป็นโมเดลหลัก
-│   ├── database.py              # ตัวเชื่อมต่อ MySQL พร้อม Foreign Key Graph Hints
-│   ├── validator.py             # ตัวตรวจเช็กความปลอดภัย SQL ด้วย sqlglot AST
-│   ├── prompts.py               # Master Prompts, Few-Shot และ Executive Narrative Schema
-│   ├── agent.py                 # ReAct Agent Core Orchestrator ขับเคลื่อนด้วย Gemini
+├── run_web.bat / run_web.ps1    # ทางลัดเปิด Streamlit Web Dashboard (Port 8501)
+├── run_api.bat / run_api.ps1    # ทางลัดเปิด FastAPI Backend Service (Port 8000)
+├── app.py                       # [Tier 1] Web Dashboard (Streamlit) แสดงผล ReAct Trace และชาร์ต
+├── cli.py                       # [Tier 1] Interactive CLI สำหรับทดสอบถามตอบใน Terminal
+│
+├── data/                        # ฐานข้อมูลตัวอย่างและชุด Schema
+│   ├── ecommerce.db             # ฐานข้อมูล SQLite จำลองสำหรับ Local Testing / Offline Dev
+│   └── ecommerce_db.sql         # ไฟล์ SQL Dump โครงสร้างและข้อมูลตัวอย่าง 18 ตาราง
+│
+├── src/                         # 🧠 Core Application Package
+│   ├── __init__.py              # Export โมดูลหลัก
+│   ├── config.py                # โหลดค่า Config และกำหนดโมเดลหลัก
+│   ├── database.py              # [Tier 4] ตัวเชื่อมต่อ MySQL/SQLite พร้อม Fast Socket Probe & Fallback
+│   ├── validator.py             # [Tier 3] ตัวตรวจเช็กความปลอดภัย SQL ด้วย sqlglot AST Guardrail
+│   ├── prompts.py               # [Tier 3] Master Prompts, Few-Shot และ Executive Narrative Schema
+│   │
+│   ├── api/                     # 🌐 [Tier 2: API Service Layer] (FastAPI REST & SSE)
+│   │   ├── __init__.py          # API package initializer
+│   │   ├── app.py               # FastAPI App instance พร้อม CORS Middleware
+│   │   ├── routes.py            # Endpoints: /health, /tables, /schema, /query, /query/stream
+│   │   ├── schemas.py           # Pydantic DTOs สำหรับ Request/Response
+│   │   └── client.py            # Python SDK Client สำหรับเรียกใช้ API จาก Client ใดก็ได้
+│   │
+│   ├── agent/                   # 🤖 [Tier 3: Domain & Agent Core] (Modular Package)
+│   │   ├── __init__.py          # Export DatabaseAgent, AgentStep, AgentRunResult
+│   │   ├── core.py              # ReAct Agent Orchestrator เชื่อมต่อกับ Engines ต่างๆ
+│   │   ├── models.py            # Dataclasses โครงสร้างข้อมูล (AgentStep, AgentRunResult)
+│   │   ├── rules.py             # Privacy Field Filtering & Limit Sanitization Guards
+│   │   ├── narrative.py         # ตัวสร้างสรุปรายงานธุรกิจภาษาไทย 3 มิติ (Executive Report)
+│   │   ├── coreference.py       # ระบบวิเคราะห์และขยายความคำถามต่อเนื่องหลายเทิร์น
+│   │   └── engines/             # ตัวขับเคลื่อน ReAct แยกตามผู้ให้บริการ
+│   │       ├── __init__.py      # Export engines
+│   │       ├── gemini_engine.py # Google GenAI SDK (Gemini 2.5 Flash / Tool Calling)
+│   │       ├── ollama_engine.py # Local LLM Engine (qwen2.5-coder:7b)
+│   │       └── mock_engine.py   # High-speed Simulation Engine สำหรับ Offline Benchmark
+│   │
 │   ├── test_sets.py             # ชุดคำถามทดสอบมาตรฐาน (Benchmark Test Set 10 ข้อ)
 │   └── seed_db.py               # สคริปต์สร้างข้อมูลจำลอง SQLite (โหมด Offline Dev)
-└── tests/
-    └── test_agent.py            # Automated Test Suite (20 Test Cases ผ่าน 100%)
+│
+├── mcp_server/                  # 🔌 ระบบ MCP Server แยก Tool อิสระสำหรับ AI อื่น
+│   ├── server.py                # จุดรัน FastMCP Server (stdio transport)
+│   ├── tools/                   # Catalog, Schema, Query Tools
+│   └── ...
+│
+└── tests/                       # 🧪 Automated Test Suite (29 Tests ผ่าน 100%)
+    ├── test_agent.py            # ReAct Agent, Self-Correction & Privacy Guard Tests (24 ข้อ)
+    ├── test_api.py              # FastAPI REST Endpoints & SSE Streaming Tests (5 ข้อ)
+    └── test_query.py            # Benchmark Runner สรุปผลลัพธ์คำถามเดี่ยวและชุดทดสอบ
 ```
 
 ---
@@ -219,11 +250,11 @@ python mcp_server/test_mcp.py
 
 ## 🧪 การตรวจสอบและทดสอบระบบ (Verification Suite)
 
-ระบบมีชุด Automated Unit Test ครอบคลุมการทำงานทั้งระบบ **20 การทดสอบ**:
+ระบบมีชุด Automated Unit Test ครอบคลุมการทำงานทั้งระบบ **24 การทดสอบ**:
 ```bash
 python -m pytest tests/test_agent.py -v
 ```
-**ผลการทดสอบผ่านครบ 100% (20/20 PASSED):**
+**ผลการทดสอบผ่านครบ 100% (24/24 PASSED):**
 * **AST Security:** บล็อกคำสั่งแก้ไข/ทำลายข้อมูลทุกรูปแบบ และบล็อก Stacked Query
 * **Dynamic Inspection:** ดึง Schema คอลัมน์และ Foreign Key ถูกต้องตามจริง
 * **Safe Execution:** รันคำสั่งอ่านข้อมูลและจำกัดจำนวนแถวได้ตามเกณฑ์
@@ -240,4 +271,3 @@ python -m pytest tests/test_agent.py -v
    * **คำแนะนำ:** หากต้องการรันคิวรียาวๆ ในโหมดฟรี สามารถสลับไปใช้ **`gemini-3.5-flash-lite`** ซึ่งได้รับโควตารายวันสูงกว่ามาก หรือเปิดใช้งานแบบ Pay-as-you-go บน Google Cloud ซึ่งมีค่าบริการเฉลี่ยเพียงเศษสตางค์ต่อคำถาม
 3. **หลัก Entity Preservation (ข้อมูลที่ไม่ระบุ):**  
    สำหรับลูกค้าที่ยังไม่ได้บันทึกที่อยู่ หรือยังไม่มีประวัติการซื้อของ ระบบจะแสดงผลเป็น `"ยังไม่ระบุ"` ตามข้อเท็จจริงในฐานข้อมูล เพื่อป้องกันไม่ให้ข้อมูลลูกค้าสูญหายจากรายงานสรุป
->>>>>>> origin/master

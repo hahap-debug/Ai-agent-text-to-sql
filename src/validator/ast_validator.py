@@ -25,13 +25,16 @@ FORBIDDEN_EXPRESSIONS = (
     exp.Set,
 )
 
+
 class SQLSecurityError(Exception):
     """Raised when an SQL query violates read-only or safety constraints."""
     pass
 
+
 class SQLSyntaxError(Exception):
     """Raised when an SQL query cannot be parsed."""
     pass
+
 
 def validate_ast_safety(query: str, allowed_tables: Optional[Set[str]] = None, dialect: str = "mysql") -> exp.Expression:
     """
@@ -93,6 +96,7 @@ def validate_ast_safety(query: str, allowed_tables: Optional[Set[str]] = None, d
                     raise SQLSecurityError(f"Access to table '{table.name}' is outside the authorized catalog.")
 
     return ast
+
 
 def extract_tables(query: str, dialect: str = "mysql") -> List[str]:
     """Helper to extract table names used in a query."""

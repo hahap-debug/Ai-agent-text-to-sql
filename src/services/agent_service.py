@@ -10,7 +10,12 @@ from src.models.entities import AgentStep, AgentRunResult
 from src.services.sql_guard_service import SQLGuardService
 from src.services.narrative_service import NarrativeService
 from src.services.coreference_service import CoreferenceService
-from src.services.llm import run_gemini_react, run_ollama_react, run_mock_react
+from src.services.llm import (
+    run_gemini_react,
+    run_nvidia_react,
+    run_ollama_react,
+    run_mock_react,
+)
 
 
 class AgentService:
@@ -34,14 +39,22 @@ class AgentService:
     ):
         self.db = db or DatabaseConnection()
         self.provider = (provider or Config.LLM_PROVIDER).lower()
-        self.api_key = api_key or Config.GEMINI_API_KEY
-        self.model_name = model_name or (Config.GEMINI_MODEL if self.provider == "gemini" else Config.OLLAMA_MODEL)
+        if self.provider == "nvidia":
+            self.api_key = api_key or Config.NVIDIA_API_KEY
+            self.model_name = model_name or Config.NVIDIA_MODEL
+        elif self.provider == "gemini":
+            self.api_key = api_key or Config.GEMINI_API_KEY
+            self.model_name = model_name or Config.GEMINI_MODEL
+        else:
+            self.api_key = api_key
+            self.model_name = model_name or Config.OLLAMA_MODEL
         self.max_steps = max_steps
         self.gemini_client = None
+        self.nvidia_client = None
         self._init_providers()
 
     def _init_providers(self):
-        """Initializes Gemini client if configured."""
+        """Initializes Gemini and NVIDIA clients if configured."""
         if self.provider == "gemini" and self.api_key and self.api_key != "your_gemini_api_key_here":
             try:
                 from google import genai
@@ -49,6 +62,16 @@ class AgentService:
             except Exception as e:
                 print(f"[Warning] Failed to initialize Google GenAI Client: {e}")
                 self.gemini_client = None
+        elif self.provider == "nvidia" and self.api_key and self.api_key != "your_nvidia_api_key_here":
+            try:
+                from openai import OpenAI
+                self.nvidia_client = OpenAI(
+                    base_url=Config.NVIDIA_BASE_URL,
+                    api_key=self.api_key
+                )
+            except Exception as e:
+                print(f"[Warning] Failed to initialize NVIDIA Client: {e}")
+                self.nvidia_client = None
 
     @property
     def is_mysql(self) -> bool:
@@ -56,7 +79,7 @@ class AgentService:
 
     def inspect_schema(self, tables: List[str]) -> Dict[str, Any]:
         """Tool 1: Inspect exact columns and keys for specified tables."""
-        raw_schema = self.db.inspect_schema(tables)
+        raw_schema = self.db.inspect_schema(tables) 
         return {
             "summary": self.db.format_schema_summary(raw_schema),
             "raw": raw_schema
@@ -65,6 +88,47 @@ class AgentService:
     def execute_sql(self, query: str) -> Dict[str, Any]:
         """Tool 2: Execute read-only SQL query on ecommerce_db."""
         return self.db.execute_read_only(query)
+
+    def create_multi_sheet_excel(
+        self,
+        file_name: str,
+        sheets: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Tool 3: Execute read-only SQL queries for each sheet and assemble an Excel workbook on the user's Desktop."""
+        from src.services.excel_service import ExcelService
+        sheets_data = []
+        for s in sheets:
+            s_name = s.get("sheet_name", "Sheet")
+            query = s.get("query", "")
+            theme = s.get("theme_color")
+
+            clean_query = SQLGuardService.sanitize_sql_limits(query, s_name)
+            query_res = self.execute_sql(clean_query)
+            if query_res.get("status") != "success":
+                err_msg = query_res.get("message") or query_res.get("error") or "Unknown database error"
+                return {
+                    "status": "error",
+                    "error": f"Failed query on sheet '{s_name}': {err_msg}",
+                    "failed_query": clean_query
+                }
+
+            rows = query_res.get("rows", [])
+            filtered_rows = SQLGuardService.filter_display_fields(rows)
+            columns = query_res.get("columns", [])
+            if not columns and filtered_rows and isinstance(filtered_rows[0], dict):
+                columns = list(filtered_rows[0].keys())
+
+            sheets_data.append({
+                "sheet_name": s_name,
+                "columns": columns,
+                "rows": filtered_rows,
+                "theme_color": theme
+            })
+
+        return ExcelService.create_workbook(
+            file_name=file_name,
+            sheets=sheets_data
+        )
 
     def reformulate_query_with_context(
         self,
@@ -80,8 +144,17 @@ class AgentService:
             chat_history=chat_history,
             provider=self.provider,
             model_name=self.model_name,
-            gemini_client=self.gemini_client
+            gemini_client=self.gemini_client,
+            nvidia_client=self.nvidia_client
         )
+
+    def _run_nvidia_react(
+        self,
+        user_question: str,
+        step_callback: Optional[Callable[[AgentStep], None]] = None,
+        chat_history: Optional[List[Dict[str, Any]]] = None
+    ) -> AgentRunResult:
+        return run_nvidia_react(self, user_question, step_callback, chat_history)
 
     def _run_ollama_react(
         self,
@@ -119,23 +192,60 @@ class AgentService:
         active_question = user_question
         expanded = None
 
-        if chat_history and len(chat_history) > 0:
-            expanded = self.reformulate_query_with_context(user_question, chat_history) #string
-            if expanded and expanded != user_question:
-                active_question = expanded
+        # [TEMPORARILY DISABLED] Coreference Resolution (Context Expansion)
+        # if chat_history and len(chat_history) > 0:
+        #     expanded = self.reformulate_query_with_context(user_question, chat_history) #string
+        #     if expanded and expanded != user_question:
+        #         active_question = expanded
 
-        if self.provider == "ollama":
+        if self.provider == "nvidia":
+            if self.nvidia_client is not None:
+                res = self._run_nvidia_react(active_question, step_callback, chat_history)
+                if not res.success and self.gemini_client is not None:
+                    print("[Dynamic Fallback] NVIDIA API request failed. Trying fallback to Gemini...")
+                    fallback_res = self._run_gemini_react(active_question, step_callback, chat_history)
+                    if fallback_res.success:
+                        res = fallback_res
+            else:
+                res = AgentRunResult(
+                    user_question=user_question,
+                    final_answer="❌ **ไม่พบคีย์ NVIDIA API Key หรือยังไม่ได้ตั้งค่า:** กรุณาตรวจสอบค่า `NVIDIA_API_KEY` ในไฟล์ `.env`",
+                    success=False,
+                    error_message="NVIDIA API Key missing"
+                )
+        elif self.provider == "ollama":
             res = self._run_ollama_react(active_question, step_callback, chat_history)
         elif self.provider == "gemini":
             if self.gemini_client is not None:
                 res = self._run_gemini_react(active_question, step_callback, chat_history)
+                # Dynamic Quota Fallback: If Gemini quota exhausted, dynamically fallback to Ollama
+                if not res.success:
+                    err_str = str(res.error_message or "").lower()
+                    ans_str = str(res.final_answer or "").lower()
+                    if any(k in err_str or k in ans_str for k in ["quota", "429", "resource_exhausted", "ran out of quota"]):
+                        print("[Dynamic Fallback] Gemini quota reached (429 / RESOURCE_EXHAUSTED). Dynamically switching to Local Ollama (qwen2.5-coder:7b)...")
+                        fallback_res = self._run_ollama_react(active_question, step_callback, chat_history)
+                        if fallback_res.success:
+                            notice = (
+                                "> ⚠️ **แจ้งเตือนโควตา (Quota Exceeded):** โควตา Google Gemini API เต็มชั่วคราว "
+                                "— ระบบได้สลับมาประมวลผลผ่าน **Local Ollama (`qwen2.5-coder:7b`)** ให้โดยอัตโนมัติ 🔄\n\n"
+                            )
+                            fallback_res.final_answer = notice + fallback_res.final_answer
+                            res = fallback_res
             else:
-                return AgentRunResult(
-                    user_question=user_question,
-                    final_answer="❌ **ไม่ได้ระบุ Gemini API Key:** กรุณาใส่ API Key ใน Sidebar หรือในไฟล์ `.env`",
-                    success=False,
-                    error_message="Gemini API Key missing"
-                )
+                print("[Dynamic Fallback] Gemini API Key missing. Falling back to Local Ollama...")
+                fallback_res = self._run_ollama_react(active_question, step_callback, chat_history)
+                if fallback_res.success:
+                    notice = "> 💡 **คำแนะนำ:** ไม่พบ Gemini API Key ในระบบ — สลับมาประมวลผลผ่าน **Local Ollama (`qwen2.5-coder:7b`)** โดยอัตโนมัติ\n\n"
+                    fallback_res.final_answer = notice + fallback_res.final_answer
+                    res = fallback_res
+                else:
+                    return AgentRunResult(
+                        user_question=user_question,
+                        final_answer="❌ **ไม่ได้ระบุ Gemini API Key:** กรุณาใส่ API Key ใน Sidebar หรือในไฟล์ `.env`",
+                        success=False,
+                        error_message="Gemini API Key missing"
+                    )
         elif self.provider == "mock":
             res = self._run_mock_react(active_question, step_callback, chat_history)
         else:
@@ -145,6 +255,26 @@ class AgentService:
         res.expanded_question = expanded if (expanded and expanded != user_question) else None
         if res.last_query_result:
             res.last_query_result = self.filter_display_fields(res.last_query_result)
+
+        # 100% Guaranteed Excel Export: Every query exports an Excel workbook to Desktop
+        if not getattr(res, "excel_file_path", None) and res.last_query_result and len(res.last_query_result) > 0:
+            from src.services.excel_service import ExcelService
+            import re
+            clean_q = re.sub(r'[^a-zA-Z0-9_\s]', '', user_question).strip().replace(' ', '_')[:30]
+            auto_fname = f"BI_Data_Report_{clean_q}.xlsx" if clean_q else "Executive_BI_Report.xlsx"
+            excel_out = ExcelService.create_workbook(
+                file_name=auto_fname,
+                sheets=[{
+                    "sheet_name": "Data_Export",
+                    "rows": res.last_query_result,
+                    "theme_color": "navy"
+                }]
+            )
+            if excel_out.get("status") == "success":
+                res.excel_file_path = excel_out.get("file_path")
+                res.excel_file_name = excel_out.get("file_name")
+                res.excel_sheets = excel_out.get("sheets")
+
         return res
 
 

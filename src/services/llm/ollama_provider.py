@@ -11,7 +11,7 @@ from src.config import Config
 from src.models.entities import AgentStep, AgentRunResult
 from src.services.sql_guard_service import SQLGuardService
 from src.services.narrative_service import NarrativeService
-from src.prompts import MASTER_SYSTEM_PROMPT
+from src.prompts import OLLAMA_SYSTEM_PROMPT, TOOL_DEFINITIONS
 
 
 def run_ollama_react(
@@ -21,15 +21,8 @@ def run_ollama_react(
     chat_history: Optional[List[Dict[str, Any]]] = None
 ) -> AgentRunResult:
     """Executes ReAct loop with local Ollama instance with Multi-Turn Context Memory."""
-    system_instruction = (
-        MASTER_SYSTEM_PROMPT
-        + "\n\n==================================================\n"
-        + "CRITICAL LANGUAGE CONSTRAINT:\n"
-        + "- Write all Thoughts (Thought: ...), steps, and answers in professional THAI (ภาษาไทย) ONLY.\n"
-        + "- ABSOLUTELY NEVER output Chinese (中文/汉字). English is allowed only for SQL code and table names."
-    )
     messages = [
-        {"role": "system", "content": system_instruction}
+        {"role": "system", "content": OLLAMA_SYSTEM_PROMPT}
     ]
 
     # Multi-Turn Context Injection
@@ -60,45 +53,13 @@ def run_ollama_react(
     steps: List[AgentStep] = []
     last_sql = None
     last_result = None
+    excel_file_path = None
+    excel_file_name = None
+    excel_sheets = None
+    seen_actions = set()
     step_num = 1
 
-    tools_schema = [
-        {
-            "type": "function",
-            "function": {
-                "name": "inspect_schema",
-                "description": "Get exact column names, data types, and foreign key relations for specific tables in ecommerce_db.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "tables": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of table names to inspect (e.g. ['orders', 'users'])"
-                        }
-                    },
-                    "required": ["tables"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "execute_sql",
-                "description": "Execute a validated read-only SQL SELECT query against ecommerce_db and retrieve resulting rows in JSON format.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Standard MySQL 8.x SELECT query adhering to ONLY_FULL_GROUP_BY."
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        }
-    ]
+    tools_schema = TOOL_DEFINITIONS
 
     #make understand right here
     for _ in range(agent.max_steps):
@@ -144,7 +105,7 @@ def run_ollama_react(
             if action_data:
                 tool_name = action_data.get("tool") or action_data.get("name")
                 tool_params = action_data.get("parameters") or action_data.get("arguments") or {}
-                if tool_name in ["inspect_schema", "execute_sql"]:
+                if tool_name in ["inspect_schema", "execute_sql", "create_multi_sheet_excel"]:
                     tool_calls = [{
                         "function": {
                             "name": tool_name,
@@ -154,6 +115,9 @@ def run_ollama_react(
                     is_text_action = True
 
         if tool_calls:
+            if last_result is not None or excel_file_path is not None:
+                break
+
             for tc in tool_calls:
                 fn_name = tc.get("function", {}).get("name")
                 fn_args = tc.get("function", {}).get("arguments", {})
@@ -162,6 +126,11 @@ def run_ollama_react(
                         fn_args = json.loads(fn_args)
                     except Exception:
                         fn_args = {}
+
+                action_sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
+                if action_sig in seen_actions:
+                    break
+                seen_actions.add(action_sig)
 
                 thought_text = assistant_msg.get("content", "").strip()
                 thought_match = re.search(r"Thought:\s*(.*?)(?=\nAction:|$)", thought_text, re.DOTALL)
@@ -174,6 +143,8 @@ def run_ollama_react(
                         thought_text = f"ตรวจสอบโครงสร้างและคอลัมน์ของตาราง `{tables_str}` เพื่อเตรียมสร้างคำสั่ง SQL"
                     elif fn_name == "execute_sql":
                         thought_text = "สร้างและประมวลผลคำสั่ง SQL SELECT เพื่อดึงข้อมูลที่ตรงตามคำถาม"
+                    elif fn_name == "create_multi_sheet_excel":
+                        thought_text = "สร้างรายงาน Excel แบบหลายแท็บพร้อมฟอร์แมตตัวเลข บันทึกลง Desktop"
                     else:
                         thought_text = f"กำลังประมวลผลผ่านเครื่องมือ `{fn_name}`"
 
@@ -217,6 +188,23 @@ def run_ollama_react(
                         messages.append({"role": "user", "content": f"Observation:\n{obs_str}"})
                     else:
                         messages.append({"role": "tool", "content": obs_str})
+                elif fn_name == "create_multi_sheet_excel":
+                    fname = fn_args.get("file_name", "Report.xlsx")
+                    sheets_param = fn_args.get("sheets", [])
+                    excel_res = agent.create_multi_sheet_excel(fname, sheets_param)
+                    if excel_res.get("status") == "success":
+                        excel_file_path = excel_res.get("file_path")
+                        excel_file_name = excel_res.get("file_name")
+                        excel_sheets = excel_res.get("sheets")
+                        step.observation = excel_res
+                    else:
+                        step.is_error = True
+                        step.observation = f"ERROR: {excel_res.get('error', 'Excel creation failed')}"
+                    obs_str = json.dumps(excel_res, ensure_ascii=False)
+                    if is_text_action:
+                        messages.append({"role": "user", "content": f"Observation:\n{obs_str}"})
+                    else:
+                        messages.append({"role": "tool", "content": obs_str})
 
                 steps.append(step)
                 if step_callback:
@@ -234,18 +222,27 @@ def run_ollama_react(
                 steps=steps,
                 last_executed_sql=last_sql,
                 last_query_result=last_result,
-                success=True
+                success=True,
+                excel_file_path=excel_file_path,
+                excel_file_name=excel_file_name,
+                excel_sheets=excel_sheets
             )
 
-    if last_result is not None:
-        final_text = NarrativeService.format_thai_narrative(user_question, last_sql or "", last_result)
+    if last_result is not None or excel_file_path is not None:
+        if last_result is not None:
+            final_text = NarrativeService.format_thai_narrative(user_question, last_sql or "", last_result)
+        else:
+            final_text = "สร้างรายงาน Excel เรียบร้อยแล้ว"
         return AgentRunResult(
             user_question=user_question,
             final_answer=final_text,
             steps=steps,
             last_executed_sql=last_sql,
             last_query_result=last_result,
-            success=True
+            success=True,
+            excel_file_path=excel_file_path,
+            excel_file_name=excel_file_name,
+            excel_sheets=excel_sheets
         )
 
     return AgentRunResult(
@@ -254,5 +251,8 @@ def run_ollama_react(
         steps=steps,
         last_executed_sql=last_sql,
         last_query_result=last_result,
-        success=False
+        success=False,
+        excel_file_path=excel_file_path,
+        excel_file_name=excel_file_name,
+        excel_sheets=excel_sheets
     )

@@ -14,6 +14,8 @@ Usage:
 """
 
 import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import json
 import time
 import argparse
@@ -155,6 +157,9 @@ def main():
     elif "--ollama" in args:
         provider = "ollama"
         args.remove("--ollama")
+    elif "--mock" in args:
+        provider = "mock"
+        args.remove("--mock")
     else:
         provider = Config.LLM_PROVIDER
 

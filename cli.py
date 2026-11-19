@@ -85,11 +85,20 @@ def main():
     if not is_connected and Config.DB_TYPE == "mysql":
         console.print("[yellow]Tip: If your MySQL is running, check DB_HOST, DB_USER, DB_PASSWORD in .env[/yellow]")
 
-    agent = DatabaseAgent(db=db)
+    provider = Config.LLM_PROVIDER
+    args = [a for a in sys.argv[1:]]
+    if "--ollama" in args:
+        provider = "ollama"
+        args.remove("--ollama")
+    elif "--gemini" in args:
+        provider = "gemini"
+        args.remove("--gemini")
+
+    agent = DatabaseAgent(db=db, provider=provider)
 
     # Check if question passed as CLI argument
-    if len(sys.argv) > 1:
-        question = " ".join(sys.argv[1:])
+    if len(args) > 0:
+        question = " ".join(args)
         run_question(agent, question)
         return
 

@@ -20,6 +20,42 @@ def run_mock_react(
     steps: List[AgentStep] = []
     q_lower = user_question.lower()
 
+    # Case: Multi-Sheet Excel Request
+    if "excel" in q_lower or ("แบรนด์" in q_lower and "ลูกค้า" in q_lower):
+        file_name = "Brand_Sales_and_VIP_Customers_Report.xlsx"
+        sheets = [
+            {
+                "sheet_name": "Top_5_Brands",
+                "query": "SELECT b.name AS brand_name, SUM(oi.quantity * oi.unit_price) AS total_sales, SUM(oi.quantity) AS total_units FROM order_items oi JOIN products p ON oi.product_id = p.id JOIN brands b ON p.brand_id = b.id GROUP BY b.id, b.name ORDER BY total_sales DESC LIMIT 5;" if agent.is_mysql else "SELECT b.brand_name, SUM(oi.quantity * oi.unit_price) AS total_sales, SUM(oi.quantity) AS total_units FROM order_items oi JOIN products p ON oi.product_id = p.product_id JOIN brands b ON p.brand_id = b.brand_id GROUP BY b.brand_id, b.brand_name ORDER BY total_sales DESC LIMIT 5;",
+                "theme_color": "blue"
+            },
+            {
+                "sheet_name": "Top_5_Customers",
+                "query": "SELECT u.id AS customer_id, CONCAT(u.first_name, ' ', u.last_name) AS customer_name, u.email, SUM(o.total_amount) AS total_spent FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.id, u.first_name, u.last_name, u.email ORDER BY total_spent DESC LIMIT 5;" if agent.is_mysql else "SELECT u.user_id AS customer_id, (u.first_name || ' ' || u.last_name) AS customer_name, u.email, SUM(o.total_amount) AS total_spent FROM users u JOIN orders o ON u.user_id = o.user_id GROUP BY u.user_id, u.first_name, u.last_name, u.email ORDER BY total_spent DESC LIMIT 5;",
+                "theme_color": "green"
+            }
+        ]
+        excel_res = agent.create_multi_sheet_excel(file_name, sheets)
+        s1 = AgentStep(
+            step_number=1,
+            thought="ผู้ใช้ขอรายงานสรุปหลายประเด็นพร้อมไฟล์ Excel สร้างไฟล์รายงานแยก 2 แท็บพร้อมจัดฟอร์แมต",
+            tool_name="create_multi_sheet_excel",
+            parameters={"file_name": file_name, "sheets_count": 2},
+            observation=excel_res
+        )
+        steps.append(s1)
+        if step_callback:
+            step_callback(s1)
+        return AgentRunResult(
+            user_question=user_question,
+            final_answer="📊 **สรุปผลลัพธ์สำคัญ (Executive Summary):**\nระบบได้สร้างรายงาน Excel แบบหลายแท็บบันทึกลงบน Desktop เรียบร้อยแล้ว",
+            steps=steps,
+            success=True,
+            excel_file_path=excel_res.get("file_path"),
+            excel_file_name=excel_res.get("file_name"),
+            excel_sheets=excel_res.get("sheets")
+        )
+
     # Case 0: Multi-Turn Follow-Up
     if chat_history and any(w in q_lower for w in ["5 คนแรก", "3 คนแรก", "คนแรก", "แสดงอีเมล", "ขอแค่", "แล้ว", "ต่อจาก"]):
         prev_context = " ".join([str(h.get("content", "")) + " " + str(h.get("sql", "")) for h in chat_history]).lower()

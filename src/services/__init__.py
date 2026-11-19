@@ -14,6 +14,7 @@ from src.services.sql_guard_service import (
 from src.services.narrative_service import NarrativeService, format_thai_narrative
 from src.services.coreference_service import CoreferenceService, reformulate_query_with_context
 from src.services.agent_service import AgentService, DatabaseAgent
+from src.services.excel_service import ExcelService
 
 __all__ = [
     "AgentService",
@@ -21,6 +22,7 @@ __all__ = [
     "SQLGuardService",
     "NarrativeService",
     "CoreferenceService",
+    "ExcelService",
     "validate_ast",
     "extract_action_json",
     "is_quota_error",

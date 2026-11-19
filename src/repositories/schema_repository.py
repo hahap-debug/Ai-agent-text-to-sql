@@ -64,7 +64,7 @@ class SchemaRepository:
             for table in tables:
                 table_clean = table.strip().replace("`", "").replace("'", "")
                 if self.query_repo.is_mysql:
-                    # 1. Fetch Columns
+                    # 1. Fetch Columns (with specific db and table )
                     cursor.execute("""
                         SELECT column_name, data_type, column_key, is_nullable
                         FROM information_schema.columns
@@ -88,7 +88,7 @@ class SchemaRepository:
                             "is_pk": ckey == "PRI"
                         })
 
-                    # 2. Fetch Foreign Keys
+                    # 2. Fetch constrain keys ที่เกี่ยวข้อง (include pk,fk,unique)
                     cursor.execute("""
                         SELECT column_name, referenced_table_name, referenced_column_name
                         FROM information_schema.key_column_usage
@@ -147,13 +147,16 @@ class SchemaRepository:
         Converts structured schema metadata into a compact, human-readable summary.
         """
         lines = []
+        '''data = dict{columns:list[dict],foreignkeys:list[dict]}
+           table = list[element]
+        '''
         for table, data in schema_info.items():
             if "error" in data:
                 lines.append(f"- Table `{table}`: ERROR - {data['error']}")
                 continue
 
             col_parts = []
-            for c in data.get("columns", []):
+            for c in data.get("columns", []): #columns > list[dict]
                 pk_flag = " (PK)" if c.get("is_pk") else ""
                 col_parts.append(f"{c['name']}{pk_flag}")
 

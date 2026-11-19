@@ -197,6 +197,33 @@ def test_gemini_quota_exceeded_error_handling(agent):
     assert "ollama" in result.final_answer.lower()
     assert "quota" in result.error_message.lower()
 
+def test_gemini_quota_dynamic_fallback_to_ollama_success(agent):
+    """Test: When Gemini quota is exceeded and Ollama succeeds, dynamic fallback delivers answer with notice."""
+    from unittest.mock import MagicMock, patch
+    from src.agent import DatabaseAgent
+    from src.agent.models import AgentRunResult
+
+    gemini_agent = DatabaseAgent(db=agent.db, provider="gemini", api_key="fake-key-for-test")
+    mock_client = MagicMock()
+    mock_client.chats.create.side_effect = Exception("429 RESOURCE_EXHAUSTED: Quota exceeded")
+    gemini_agent.gemini_client = mock_client
+
+    mock_ollama_result = AgentRunResult(
+        user_question="แบรนด์ไหนขายดีที่สุด 5 อันดับ",
+        final_answer="📊 **สรุปผลลัพธ์สำคัญ:** แบรนด์ Apple มียอดขายสูงสุด",
+        steps=[],
+        last_executed_sql="SELECT * FROM brands;",
+        last_query_result=[{"name": "Apple"}],
+        success=True
+    )
+
+    with patch.object(gemini_agent, "_run_ollama_react", return_value=mock_ollama_result):
+        res = gemini_agent.run("แบรนด์ไหนขายดีที่สุด 5 อันดับ")
+        assert res.success is True
+        assert "แจ้งเตือนโควตา" in res.final_answer or "Quota Exceeded" in res.final_answer
+        assert "Apple" in res.final_answer
+        assert "Ollama" in res.final_answer
+
 def test_filter_display_fields_unit():
     """Unit test for post-execution field filtering rule."""
     from src.agent import DatabaseAgent

@@ -49,7 +49,10 @@ def run_result_to_response(res: AgentRunResult) -> ChatResponse:
         last_query_result=res.last_query_result,
         expanded_question=res.expanded_question,
         success=res.success,
-        error_message=res.error_message
+        error_message=res.error_message,
+        excel_file_path=res.excel_file_path,
+        excel_file_name=res.excel_file_name,
+        excel_sheets=res.excel_sheets
     )
 
 
@@ -100,7 +103,7 @@ def generate_sse_events(
 @router.post("/query", response_model=ChatResponse)
 def execute_query(req: ChatRequest) -> ChatResponse:
     """Executes full ReAct loop synchronously."""
-    agent = get_agent(provider=req.provider, model_name=req.model_name)
+    agent = get_agent(provider=req.provider, model_name=req.model_name) #Get AgentService
     try:
         result = agent.run(
             user_question=req.question,

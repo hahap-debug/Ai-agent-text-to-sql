@@ -18,7 +18,8 @@ class CoreferenceService:
         chat_history: Optional[List[Dict[str, Any]]] = None,
         provider: str = "ollama",
         model_name: str = "qwen2.5-coder:7b",
-        gemini_client: Optional[Any] = None
+        gemini_client: Optional[Any] = None,
+        nvidia_client: Optional[Any] = None
     ) -> str:
         """
         Uses LLM Coreference Resolution to reformulate ambiguous or pronoun-dropped
@@ -84,13 +85,40 @@ class CoreferenceService:
                     if expanded and len(expanded) > 3:
                         return expanded
             elif provider == "gemini" and gemini_client:
-                response = gemini_client.models.generate_content(
-                    model=model_name,
-                    contents=f"{sys_prompt}\n\n{user_prompt}"
-                )
-                expanded = response.text.strip().replace("ประธาน:", "").strip(' "\'\n')
-                if expanded and len(expanded) > 3:
-                    return expanded
+                try:
+                    response = gemini_client.models.generate_content(
+                        model=model_name,
+                        contents=f"{sys_prompt}\n\n{user_prompt}"
+                    )
+                    expanded = response.text.strip().replace("ประธาน:", "").strip(' "\'\n')
+                    if expanded and len(expanded) > 3:
+                        return expanded
+                except Exception as ge:
+                    print(f"[Coreference Fallback] Gemini error ({ge}), falling back to Ollama...")
+                    return CoreferenceService.reformulate_query_with_context(
+                        current_question, chat_history, provider="ollama", model_name=Config.OLLAMA_MODEL
+                    )
+            elif provider == "nvidia" and nvidia_client:
+                try:
+                    resp = nvidia_client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": sys_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=150
+                    )
+                    msg = resp.choices[0].message
+                    expanded = (msg.content or "").strip().replace("ประธาน:", "").strip(' "\'\n')
+                    if not expanded and getattr(msg, "reasoning_content", None):
+                        # Some reasoning models might formulate in reasoning_content
+                        lines = msg.reasoning_content.strip().split("\n")
+                        expanded = lines[-1].strip(' "\'\n')
+                    if expanded and len(expanded) > 3:
+                        return expanded
+                except Exception as ne:
+                    print(f"[Coreference] NVIDIA error: {ne}")
             elif provider == "mock":
                 q_low = current_question.lower()
                 if any(w in q_low for w in ["ประเทศ", "country", "มาจากไหน"]):

@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional, Callable
 from src.models.entities import AgentStep, AgentRunResult
 from src.services.sql_guard_service import SQLGuardService
 from src.services.narrative_service import NarrativeService
-from src.prompts import MASTER_SYSTEM_PROMPT
+from src.prompts import GEMINI_SYSTEM_PROMPT
 
 
 def run_gemini_react(
@@ -51,36 +51,80 @@ def run_gemini_react(
             rows = exec_res.get("rows", [])
             last_sql_box["result"] = rows
             step.observation = rows
+            ret_msg = json.dumps(exec_res, ensure_ascii=False) + "\n\n[SYSTEM DIRECTIVE: Data retrieval complete. STOP calling any more tools and deliver your Final Answer in Thai immediately.]"
         else:
             step.is_error = True
             step.observation = f"ERROR: {exec_res.get('message')}"
+            ret_msg = json.dumps(exec_res, ensure_ascii=False)
         steps.append(step)
         if step_callback:
             step_callback(step)
-        return json.dumps(exec_res, ensure_ascii=False)
+        return ret_msg
 
-    tools = [inspect_schema, execute_sql]
+    excel_box = {"file_path": None, "file_name": None, "sheets": None}
+
+    def create_multi_sheet_excel(file_name: str, sheets: List[Dict[str, Any]]) -> str:
+        step = AgentStep(
+            step_number=len(steps) + 1,
+            thought="สร้างรายงาน Excel แบบหลายแท็บ (Multi-Worksheet) พร้อมจัดฟอร์แมตตัวเลขและสีหัวตาราง บันทึกลง Desktop",
+            tool_name="create_multi_sheet_excel",
+            parameters={"file_name": file_name, "sheets_count": len(sheets) if isinstance(sheets, list) else 0}
+        )
+        res = agent.create_multi_sheet_excel(file_name, sheets)
+        if res.get("status") == "success":
+            excel_box["file_path"] = res.get("file_path")
+            excel_box["file_name"] = res.get("file_name")
+            excel_box["sheets"] = res.get("sheets")
+            step.observation = res
+            ret_msg = json.dumps(res, ensure_ascii=False) + "\n\n[SYSTEM DIRECTIVE: Excel created successfully. STOP calling any more tools and deliver your Final Answer in Thai immediately.]"
+        else:
+            step.is_error = True
+            step.observation = f"ERROR: {res.get('error', 'Failed to create Excel workbook')}"
+            ret_msg = json.dumps(res, ensure_ascii=False)
+        steps.append(step)
+        if step_callback:
+            step_callback(step)
+        return ret_msg
+
+    tools = [inspect_schema, execute_sql, create_multi_sheet_excel]
     quota_exceeded = False
     error_details = None
+
+    # Multi-Turn: For Gemini (1M+ context window), inject ALL chat history into chat session
+    initial_history: List[types.Content] = []
+    if chat_history:
+        for item in chat_history:
+            role = item.get("role")
+            content_text = str(item.get("content", "")).strip()
+            if not content_text:
+                continue
+            if role == "user":
+                initial_history.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=content_text)]
+                    )
+                )
+            elif role in ("assistant", "model"):
+                sql_info = f"\n\n[Executed SQL: {item.get('sql')}]" if item.get("sql") else ""
+                full_text = f"{content_text}{sql_info}"
+                initial_history.append(
+                    types.Content(
+                        role="model",
+                        parts=[types.Part.from_text(text=full_text)]
+                    )
+                )
 
     try:
         chat = agent.gemini_client.chats.create(
             model=agent.model_name,
             config=types.GenerateContentConfig(
-                system_instruction=MASTER_SYSTEM_PROMPT,
+                system_instruction=GEMINI_SYSTEM_PROMPT,
                 tools=tools,
                 temperature=0.1
-            )
+            ),
+            history=initial_history if initial_history else None
         )
-
-        if chat_history:
-            for item in chat_history[-2:]:
-                if item.get("role") == "user":
-                    chat.send_message(f"[บริบทคำถามก่อนหน้า]: {item.get('content')}")
-                elif item.get("role") == "assistant":
-                    asst_summary = item.get("content", "")[:250]
-                    sql_info = f" [SQL ที่เคยรัน: {item.get('sql')}]" if item.get("sql") else ""
-                    chat.send_message(f"[ผลลัพธ์บริบทก่อนหน้า]: {asst_summary}{sql_info}")
 
         response = chat.send_message(user_question)
         final_text = getattr(response, "text", "") or ""
@@ -111,6 +155,9 @@ def run_gemini_react(
         steps=steps,
         last_executed_sql=last_sql,
         last_query_result=last_result,
-        success=False if quota_exceeded or error_details else (True if (last_result is not None or final_text) else False),
-        error_message="Ran out of quota (Gemini 429 RESOURCE_EXHAUSTED)" if quota_exceeded else error_details
+        success=False if quota_exceeded or (error_details and not excel_box["file_path"]) else (True if (last_result is not None or excel_box["file_path"] or final_text) else False),
+        error_message="Ran out of quota (Gemini 429 RESOURCE_EXHAUSTED)" if quota_exceeded else error_details,
+        excel_file_path=excel_box["file_path"],
+        excel_file_name=excel_box["file_name"],
+        excel_sheets=excel_box["sheets"]
     )

@@ -28,3 +28,6 @@ class AgentRunResult:
     expanded_question: Optional[str] = None
     success: bool = True
     error_message: Optional[str] = None
+    excel_file_path: Optional[str] = None
+    excel_file_name: Optional[str] = None
+    excel_sheets: Optional[List[str]] = None

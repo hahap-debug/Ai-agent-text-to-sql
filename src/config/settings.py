@@ -7,11 +7,12 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Base directory
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Base directory (Project Root)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Load .env file
 load_dotenv(BASE_DIR / ".env", override=True)
+
 
 class Config:
     # Database Settings
@@ -31,7 +32,12 @@ class Config:
     SQLITE_DB_PATH = str(BASE_DIR / os.getenv("SQLITE_DB_PATH", "data/ecommerce.db"))
 
     # LLM Settings
-    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "nvidia").lower()
+
+    # NVIDIA Cloud Settings
+    NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+    NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
+    NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
     
     # Ollama Settings
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -52,10 +58,16 @@ class Config:
     DEFAULT_ROW_LIMIT = int(os.getenv("DEFAULT_ROW_LIMIT", "1000"))
     SQL_TIMEOUT_SECONDS = int(float(os.getenv("QUERY_TIMEOUT_SECONDS", "5.0")))
 
-    @classmethod #Method นี้สามารถเข้าถึง Class ได้โดยตรง โดยไม่จำเป็นต้องสร้าง Object ก่อน
+    @classmethod
     def is_api_key_set(cls) -> bool:
+        if cls.LLM_PROVIDER == "nvidia":
+            return cls.is_nvidia_available()
         return cls.is_gemini_available()
 
-    @classmethod #Method นี้สามารถเข้าถึง Class ได้โดยตรง โดยไม่จำเป็นต้องสร้าง Object ก่อน
+    @classmethod
+    def is_nvidia_available(cls) -> bool:
+        return bool(cls.NVIDIA_API_KEY and cls.NVIDIA_API_KEY != "your_nvidia_api_key_here")
+
+    @classmethod
     def is_gemini_available(cls) -> bool:
         return bool(cls.GEMINI_API_KEY and cls.GEMINI_API_KEY != "your_gemini_api_key_here")

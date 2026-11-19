@@ -8,7 +8,7 @@ import re
 import urllib.request
 from typing import List, Dict, Any, Optional, Callable
 from src.config import Config
-from src.prompts import MASTER_SYSTEM_PROMPT, TOOL_DEFINITIONS
+from src.prompts import OLLAMA_SYSTEM_PROMPT, TOOL_DEFINITIONS
 from src.agent.models import AgentStep, AgentRunResult
 from src.agent.rules import extract_action_json, sanitize_sql_limits
 from src.agent.narrative import format_thai_narrative
@@ -20,15 +20,8 @@ def run_ollama_react(
     chat_history: Optional[List[Dict[str, Any]]] = None
 ) -> AgentRunResult:
     """Executes ReAct loop with local Ollama instance with Multi-Turn Context Memory."""
-    system_instruction = (
-        MASTER_SYSTEM_PROMPT
-        + "\n\n==================================================\n"
-        + "CRITICAL LANGUAGE CONSTRAINT:\n"
-        + "- Write all Thoughts (Thought: ...), steps, and answers in professional THAI (ภาษาไทย) ONLY.\n"
-        + "- ABSOLUTELY NEVER output Chinese (中文/汉字). English is allowed only for SQL code and table names."
-    )
     messages = [
-        {"role": "system", "content": system_instruction}
+        {"role": "system", "content": OLLAMA_SYSTEM_PROMPT}
     ]
 
     # Multi-Turn Context Injection: Include compact recent conversation history
@@ -65,6 +58,10 @@ def run_ollama_react(
     steps: List[AgentStep] = []
     last_sql = None
     last_result = None
+    excel_file_path = None
+    excel_file_name = None
+    excel_sheets = None
+    seen_actions = set()
     step_num = 1
 
     while step_num <= agent.max_steps:
@@ -113,11 +110,14 @@ def run_ollama_react(
             if action_data:
                 fn_name = action_data.get("tool") or action_data.get("name")
                 fn_args = action_data.get("parameters") or action_data.get("arguments") or {}
-                if fn_name in ("inspect_schema", "execute_sql"):
+                if fn_name in ("inspect_schema", "execute_sql", "create_multi_sheet_excel"):
                     tool_calls = [{"function": {"name": fn_name, "arguments": fn_args}}]
                     is_text_action = True
 
         if tool_calls:
+            if last_result is not None or excel_file_path is not None:
+                break
+
             for call in tool_calls:
                 fn_info = call.get("function", {})
                 fn_name = fn_info.get("name")
@@ -125,6 +125,11 @@ def run_ollama_react(
                 if isinstance(fn_args, str):
                     try: fn_args = json.loads(fn_args)
                     except Exception: fn_args = {}
+
+                action_sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
+                if action_sig in seen_actions:
+                    break
+                seen_actions.add(action_sig)
 
                 thought_text = content
                 if is_text_action and "Action:" in thought_text:
@@ -137,6 +142,8 @@ def run_ollama_react(
                         thought_text = f"ตรวจสอบโครงสร้างและคอลัมน์ของตาราง `{tables_str}` เพื่อเตรียมสร้างคำสั่ง SQL"
                     elif fn_name == "execute_sql":
                         thought_text = "สร้างและประมวลผลคำสั่ง SQL SELECT เพื่อดึงข้อมูลที่ตรงตามคำถาม"
+                    elif fn_name == "create_multi_sheet_excel":
+                        thought_text = "สร้างรายงาน Excel แบบหลายแท็บพร้อมฟอร์แมตตัวเลข บันทึกลง Desktop"
                     else:
                         thought_text = f"กำลังประมวลผลผ่านเครื่องมือ `{fn_name}`"
                 elif re.search(r"[\u4e00-\u9fff]", thought_text):
@@ -145,6 +152,8 @@ def run_ollama_react(
                         thought_text = f"ตรวจสอบโครงสร้างและคอลัมน์ของตาราง `{tables_str}` เพื่อเตรียมสร้างคำสั่ง SQL"
                     elif fn_name == "execute_sql":
                         thought_text = "สร้างและประมวลผลคำสั่ง SQL SELECT เพื่อดึงข้อมูลที่ตรงตามคำถาม"
+                    elif fn_name == "create_multi_sheet_excel":
+                        thought_text = "สร้างรายงาน Excel แบบหลายแท็บพร้อมฟอร์แมตตัวเลข บันทึกลง Desktop"
                     else:
                         thought_text = f"กำลังประมวลผลผ่านเครื่องมือ `{fn_name}`"
 
@@ -188,6 +197,23 @@ def run_ollama_react(
                         messages.append({"role": "user", "content": f"Observation:\n{obs_str}"})
                     else:
                         messages.append({"role": "tool", "content": obs_str})
+                elif fn_name == "create_multi_sheet_excel":
+                    fname = fn_args.get("file_name", "Report.xlsx")
+                    sheets_param = fn_args.get("sheets", [])
+                    excel_res = agent.create_multi_sheet_excel(fname, sheets_param)
+                    if excel_res.get("status") == "success":
+                        excel_file_path = excel_res.get("file_path")
+                        excel_file_name = excel_res.get("file_name")
+                        excel_sheets = excel_res.get("sheets")
+                        step.observation = excel_res
+                    else:
+                        step.is_error = True
+                        step.observation = f"ERROR: {excel_res.get('error', 'Excel creation failed')}"
+                    obs_str = json.dumps(excel_res, ensure_ascii=False)
+                    if is_text_action:
+                        messages.append({"role": "user", "content": f"Observation:\n{obs_str}"})
+                    else:
+                        messages.append({"role": "tool", "content": obs_str})
 
                 steps.append(step)
                 if step_callback:
@@ -206,19 +232,28 @@ def run_ollama_react(
                 steps=steps,
                 last_executed_sql=last_sql,
                 last_query_result=last_result,
-                success=True
+                success=True,
+                excel_file_path=excel_file_path,
+                excel_file_name=excel_file_name,
+                excel_sheets=excel_sheets
             )
 
     # If loop reached max_steps, synthesize final answer from query results if available
-    if last_result is not None:
-        final_text = format_thai_narrative(user_question, last_sql or "", last_result)
+    if last_result is not None or excel_file_path is not None:
+        if last_result is not None:
+            final_text = format_thai_narrative(user_question, last_sql or "", last_result)
+        else:
+            final_text = "สร้างรายงาน Excel เรียบร้อยแล้ว"
         return AgentRunResult(
             user_question=user_question,
             final_answer=final_text,
             steps=steps,
             last_executed_sql=last_sql,
             last_query_result=last_result,
-            success=True
+            success=True,
+            excel_file_path=excel_file_path,
+            excel_file_name=excel_file_name,
+            excel_sheets=excel_sheets
         )
 
     return AgentRunResult(
@@ -227,5 +262,8 @@ def run_ollama_react(
         steps=steps,
         last_executed_sql=last_sql,
         last_query_result=last_result,
-        success=False
+        success=False,
+        excel_file_path=excel_file_path,
+        excel_file_name=excel_file_name,
+        excel_sheets=excel_sheets
     )

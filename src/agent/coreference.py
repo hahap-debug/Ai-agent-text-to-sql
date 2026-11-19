@@ -79,13 +79,19 @@ def reformulate_query_with_context(
                 if expanded and len(expanded) > 3:
                     return expanded
         elif provider == "gemini" and gemini_client:
-            response = gemini_client.models.generate_content(
-                model=model_name,
-                contents=f"{sys_prompt}\n\n{user_prompt}"
-            )
-            expanded = response.text.strip().replace("ประธาน:", "").strip(' "\'\n')
-            if expanded and len(expanded) > 3:
-                return expanded
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=f"{sys_prompt}\n\n{user_prompt}"
+                )
+                expanded = response.text.strip().replace("ประธาน:", "").strip(' "\'\n')
+                if expanded and len(expanded) > 3:
+                    return expanded
+            except Exception as ge:
+                print(f"[Coreference Fallback] Gemini error ({ge}), falling back to Ollama...")
+                return reformulate_query_with_context(
+                    current_question, chat_history, provider="ollama", model_name=Config.OLLAMA_MODEL
+                )
         elif provider == "mock":
             q_low = current_question.lower()
             if any(w in q_low for w in ["ประเทศ", "country", "มาจากไหน"]):

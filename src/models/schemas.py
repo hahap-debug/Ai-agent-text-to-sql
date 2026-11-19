@@ -31,6 +31,9 @@ class ChatResponse(BaseModel):
     expanded_question: Optional[str] = None
     success: bool
     error_message: Optional[str] = None
+    excel_file_path: Optional[str] = None
+    excel_file_name: Optional[str] = None
+    excel_sheets: Optional[List[str]] = None
 
 
 class HealthResponse(BaseModel):

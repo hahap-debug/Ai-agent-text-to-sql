@@ -219,51 +219,19 @@ with st.sidebar:
 st.markdown("""
 <div class="hero-container">
     <div class="hero-title">
-        <span>📊 E-Commerce AI Data Analytics & BI Agent</span>
+        <span>📊 ผู้ช่วยวิเคราะห์ข้อมูลธุรกิจอัจฉริยะ (AI Data Assistant)</span>
     </div>
     <div class="hero-subtitle">
-        ระบบผู้ช่วยวิเคราะห์ข้อมูลธุรกิจอัจฉริยะสำหรับฐานข้อมูล <strong>ecommerce_db</strong><br/>
-        แปลงภาษาธรรมชาติ (TH) ➔ สรุปบทวิเคราะห์ผู้บริหาร • สร้างรายงาน Excel หลายแท็บบันทึกตรงลง Desktop • ป้องกันความปลอดภัย 100% ด้วย AST Read-Only Guard
+        ถามข้อมูลธุรกิจของคุณได้ง่ายๆ แค่พิมพ์เป็นภาษาไทย เหมือนคุยกับนักวิเคราะห์ข้อมูลส่วนตัว<br/>
+        ไม่ว่าจะเป็น <strong>ยอดขาย, สินค้าขายดี, ข้อมูลลูกค้า, หรือสต็อกคงเหลือ</strong> ระบบจะสรุปคำตอบที่เข้าใจง่ายให้ทันที พร้อมดาวน์โหลดรายงาน Excel ได้ทันใจ
+    </div>
+    <div style="display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap;">
+        <span style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; font-size: 0.82rem; padding: 4px 10px; border-radius: 20px;">💬 ถามเป็นภาษาไทยง่ายๆ ไม่ต้องรู้โค้ด</span>
+        <span style="background: rgba(52, 211, 153, 0.1); border: 1px solid rgba(52, 211, 153, 0.3); color: #34d399; font-size: 0.82rem; padding: 4px 10px; border-radius: 20px;">📈 สรุปข้อมูลยอดขายและสต็อกสดใหม่</span>
+        <span style="background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.3); color: #c084fc; font-size: 0.82rem; padding: 4px 10px; border-radius: 20px;">📑 ดาวน์โหลดรายงานเป็น Excel ได้ทันที</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
-
-# ----------------- EXECUTIVE KPI METRIC CARDS -----------------
-kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
-
-with kpi_col1:
-    st.markdown("""
-    <div class="stat-card">
-        <div class="stat-label">🗄️ ฐานข้อมูลหลัก</div>
-        <div class="stat-value">ecommerce_db</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with kpi_col2:
-    st.markdown(f"""
-    <div class="stat-card">
-        <div class="stat-label">🤖 AI Engine</div>
-        <div class="stat-value">{'NVIDIA Cloud' if provider_choice == 'nvidia' else ('Google Gemini' if provider_choice == 'gemini' else 'Local Ollama')}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with kpi_col3:
-    st.markdown("""
-    <div class="stat-card">
-        <div class="stat-label">🛡️ SQL Security</div>
-        <div class="stat-value">AST Read-Only Guard</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with kpi_col4:
-    st.markdown("""
-    <div class="stat-card">
-        <div class="stat-label">📑 BI Export Tool</div>
-        <div class="stat-value">Multi-Sheet Excel</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.write("")
 
 # ----------------- BUSINESS DOMAINS ACCORDION -----------------
 with st.expander("🧭 ขอบเขตข้อมูลเชิงธุรกิจที่ระบบวิเคราะห์ได้ (Business Domains - ครอบคลุม 31 ตาราง)", expanded=False):

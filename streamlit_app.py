@@ -172,18 +172,18 @@ with st.sidebar:
             "best_for": "คำถามที่มีประวัติการคุยต่อเนื่องยาว (Long Conversation), การดึง Schema จำนวนมากพร้อมกัน และงานสรุปรายงานภาษาไทย",
             "api_key": getattr(Config, "GEMINI_API_KEY", "")
         },
-        "ollama": {
-            "name": "🖥️ Local Ollama (Offline)",
-            "model_id": getattr(Config, "OLLAMA_MODEL", "qwen2.5-coder:7b"),
-            "context_window": "32,768 Tokens (~32K)",
-            "best_for": "คำถาม Text-to-SQL ทั่วไป, ใช้งานแบบ Offline ในเครื่อง 100% ไม่ต้องต่อเน็ต และข้อมูลเป็นความลับสูงสุด",
-            "api_key": None
-        }
+        # "ollama": {
+        #     "name": "🖥️ Local Ollama (Offline)",
+        #     "model_id": getattr(Config, "OLLAMA_MODEL", "qwen2.5-coder:7b"),
+        #     "context_window": "32,768 Tokens (~32K)",
+        #     "best_for": "คำถาม Text-to-SQL ทั่วไป, ใช้งานแบบ Offline ในเครื่อง 100% ไม่ต้องต่อเน็ต และข้อมูลเป็นความลับสูงสุด",
+        #     "api_key": None
+        # }
     }
 
     provider_choice = st.radio(
         "เลือกโมเดลที่ต้องการใช้งาน:",
-        ["nvidia", "gemini", "ollama"],
+        ["nvidia", "gemini"],  # "ollama" commented out for web UI
         index=0,
         format_func=lambda x: models_meta[x]["name"],
         key="selected_provider"
@@ -298,7 +298,7 @@ with st.expander("🧭 ขอบเขตข้อมูลเชิงธุร
         """)
 
 # ----------------- QUICK PROMPTS CHIPS -----------------
-st.write("💡 **คำถามวิเคราะห์ธุรกิจยอดนิยม (คลิกเพื่อทดสอบทันที):**")
+st.write("💡 **คำถามตัวอย่างประมาณนี้:**")
 btn1, btn2, btn3, btn4, btn5 = st.columns(5)
 quick_prompt = None
 
@@ -316,17 +316,6 @@ if btn4.button("📊 สรุปแบรนด์ + ลูกค้า (Excel)
 
 if btn5.button("🏢 สต็อกคงเหลือแยกโกดัง", use_container_width=True):
     quick_prompt = "ตอนนี้แต่ละโกดังมีของเหลืออยู่ทั้งหมดกี่ชิ้น สรุปยอดรวมแยกตามคลังให้หน่อย"
-
-# ----------------- BENCHMARK SET EXPANDER -----------------
-with st.expander("🧪 ชุดคำถามทดสอบมาตรฐาน (Benchmark Test Set 10 ข้อ)", expanded=False):
-    selected_bench = st.selectbox(
-        "เลือกคำถามทดสอบมาตรฐาน:",
-        ["-- กรุณาเลือกคำถาม --"] + [f"ข้อ {i}: {q}" for i, q in enumerate(TEST_SET, 1)],
-        key="bench_test_select"
-    )
-    if st.button("🚀 รันคำถามทดสอบนี้", use_container_width=False):
-        if selected_bench != "-- กรุณาเลือกคำถาม --":
-            quick_prompt = selected_bench.split(": ", 1)[1]
 
 st.divider()
 

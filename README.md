@@ -90,7 +90,7 @@ DB_PASSWORD=reader_pass123
 ### 3. เปิดหน้าเว็บใช้งานได้เลย!
 พิมพ์คำสั่งนี้:
 ```bash
-python -m streamlit run app.py
+python -m streamlit run streamlit_app.py
 ```
 เปิดเบราว์เซอร์ไปที่ `http://localhost:8501` หน้าเว็บแชตพร้อมปุ่มตัวอย่างคำถามจะขึ้นมาให้ใช้งานทันที! 🎉
 
@@ -111,7 +111,7 @@ python -m streamlit run app.py
 
 ```text
 Agent_natural_langauge_to_sql/
-├── app.py                   # 🖥️ หน้าเว็บสวยๆ สำหรับพิมพ์คุยกับ AI (Streamlit)
+├── streamlit_app.py         # 🖥️ หน้าเว็บสวยๆ สำหรับพิมพ์คุยกับ AI (Streamlit)
 ├── .env                     # 🔑 ที่เก็บรหัสผ่านและ API Key ต่างๆ
 ├── requirements.txt         # 📦 รายชื่อโปรแกรมที่ต้องติดตั้ง
 │

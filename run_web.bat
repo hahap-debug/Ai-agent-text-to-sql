@@ -6,5 +6,5 @@ echo   Starting AI Data Analytics Agent Web Dashboard (Streamlit)
 echo ============================================================
 echo.
 echo Opening browser at http://localhost:8501 ...
-python -m streamlit run app.py
+python -m streamlit run streamlit_app.py
 pause

@@ -155,17 +155,6 @@ db = st.session_state.db
 # ----------------- SIDEBAR -----------------
 with st.sidebar:
     st.title("⚙️ การตั้งค่าระบบ (Settings)")
-    
-    # Database connection section
-    st.subheader("ฐานข้อมูล (Database)")
-    is_connected, db_msg = db.test_connection()
-    if is_connected:
-        st.success(f"✅ {db_msg}")
-    else:
-        st.error(f"❌ {db_msg}")
-        st.info("ตรวจสอบค่าการเชื่อมต่อในไฟล์ `.env`")
-
-    st.divider()
 
     # LLM Provider selection
     st.subheader("สมองกล AI (LLM Provider)")
@@ -426,11 +415,24 @@ if prompt_to_run:
                         st.info(f"👁️ **Observation:**\n\n```\n{obs_str}\n```")
                 st.divider()
 
-            result = agent.run(
-                prompt_to_run,
-                step_callback=live_step_callback,
-                chat_history=st.session_state.messages[:-1] if len(st.session_state.messages) > 1 else None
-            )
+            if getattr(Config, "API_BASE_URL", ""):
+                # Routed via FastAPI Endpoint
+                from src.api.client import AgentAPIClient
+                api_client = AgentAPIClient(base_url=Config.API_BASE_URL)
+                result = api_client.query_stream(
+                    question=prompt_to_run,
+                    step_callback=live_step_callback,
+                    provider=provider_choice,
+                    model_name=model_choice,
+                    chat_history=st.session_state.messages[:-1] if len(st.session_state.messages) > 1 else None
+                )
+            else:
+                # Direct In-Process Execution
+                result = agent.run(
+                    prompt_to_run,
+                    step_callback=live_step_callback,
+                    chat_history=st.session_state.messages[:-1] if len(st.session_state.messages) > 1 else None
+                )
 
             if result.success:
                 status_box.update(

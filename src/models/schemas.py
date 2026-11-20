@@ -52,3 +52,15 @@ class SchemaInspectResponse(BaseModel):
     tables: List[str]
     summary: str
     raw: Dict[str, Any]
+
+
+class SqlExecuteRequest(BaseModel):
+    query: str = Field(..., description="Read-only SELECT SQL query to execute against the online database")
+
+
+class SqlExecuteResponse(BaseModel):
+    status: str
+    row_count: Optional[int] = None
+    rows: Optional[List[Dict[str, Any]]] = None
+    message: Optional[str] = None
+

@@ -65,6 +65,11 @@ class DatabaseConnection:
                 raise se
 
             try:
+                ssl_kwargs = {}
+                import os
+                if self.port == 4000 or "tidbcloud.com" in self.host.lower() or os.getenv("DB_SSL", "false").lower() in ("true", "1", "require"):
+                    ssl_kwargs = {"ssl_verify_cert": True, "ssl_verify_identity": True}
+
                 return pymysql.connect(
                     host=self.host,
                     port=self.port,
@@ -73,8 +78,9 @@ class DatabaseConnection:
                     database=self.database,
                     charset=Config.DB_CHARSET,
                     cursorclass=pymysql.cursors.DictCursor,
-                    connect_timeout=3 if self.auto_fallback else Config.SQL_TIMEOUT_SECONDS,
-                    autocommit=True
+                    connect_timeout=5 if self.auto_fallback else Config.SQL_TIMEOUT_SECONDS,
+                    autocommit=True,
+                    **ssl_kwargs
                 )
             except Exception as e:
                 if self.auto_fallback:

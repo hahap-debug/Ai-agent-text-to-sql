@@ -13,6 +13,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # Load .env file
 load_dotenv(BASE_DIR / ".env", override=True)
 
+# Auto-load Streamlit Cloud Secrets (if running on Streamlit Cloud)
+try:
+    import streamlit as st
+    if hasattr(st, "secrets"):
+        for sec_key, sec_val in st.secrets.items():
+            if isinstance(sec_val, dict):
+                for sub_k, sub_v in sec_val.items():
+                    os.environ[f"{sec_key.upper()}_{sub_k.upper()}"] = str(sub_v)
+                    os.environ[sub_k.upper()] = str(sub_v)
+            else:
+                os.environ[sec_key.upper()] = str(sec_val)
+except Exception:
+    pass
+
 
 class Config:
     # Database Settings
@@ -30,6 +44,9 @@ class Config:
 
     # SQLite (Fallback/Testing mode)
     SQLITE_DB_PATH = str(BASE_DIR / os.getenv("SQLITE_DB_PATH", "data/ecommerce.db"))
+
+    # FastAPI Endpoint Setting (Optional: if set, Web UI routes queries through FastAPI instead of direct DB)
+    API_BASE_URL = os.getenv("API_BASE_URL", "").strip().rstrip("/")
 
     # LLM Settings
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "nvidia").lower()

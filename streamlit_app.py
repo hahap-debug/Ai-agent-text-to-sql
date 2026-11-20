@@ -154,33 +154,61 @@ db = st.session_state.db
 
 # ----------------- SIDEBAR -----------------
 with st.sidebar:
-    st.title("⚙️ การตั้งค่าระบบ (Settings)")
+    st.title("🤖 โมเดล AI ที่ใช้งานได้")
 
-    # LLM Provider selection
-    st.subheader("สมองกล AI (LLM Provider)")
+    # Metadata for all available models
+    models_meta = {
+        "nvidia": {
+            "name": "⚡ NVIDIA Cloud (แนะนำ 🌟)",
+            "model_id": getattr(Config, "NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"),
+            "context_window": "128,000 Tokens (~128K)",
+            "best_for": "คำถามวิเคราะห์ธุรกิจที่มีความซับซ้อนสูง, Multi-Table JOINs หลายตาราง, การคำนวณขั้นสูง และต้องการความเร็วในการตอบสนองแบบทันใจ",
+            "api_key": getattr(Config, "NVIDIA_API_KEY", "")
+        },
+        "gemini": {
+            "name": "☁️ Google Gemini",
+            "model_id": getattr(Config, "GEMINI_MODEL", "gemini-3.5-flash"),
+            "context_window": "1,000,000 Tokens (~1M)",
+            "best_for": "คำถามที่มีประวัติการคุยต่อเนื่องยาว (Long Conversation), การดึง Schema จำนวนมากพร้อมกัน และงานสรุปรายงานภาษาไทย",
+            "api_key": getattr(Config, "GEMINI_API_KEY", "")
+        },
+        "ollama": {
+            "name": "🖥️ Local Ollama (Offline)",
+            "model_id": getattr(Config, "OLLAMA_MODEL", "qwen2.5-coder:7b"),
+            "context_window": "32,768 Tokens (~32K)",
+            "best_for": "คำถาม Text-to-SQL ทั่วไป, ใช้งานแบบ Offline ในเครื่อง 100% ไม่ต้องต่อเน็ต และข้อมูลเป็นความลับสูงสุด",
+            "api_key": None
+        }
+    }
+
     provider_choice = st.radio(
-        "เลือก Engine ในการประมวลผล:",
+        "เลือกโมเดลที่ต้องการใช้งาน:",
         ["nvidia", "gemini", "ollama"],
         index=0,
-        format_func=lambda x: {
-            "nvidia": "⚡ NVIDIA Cloud (Nemotron-3.5-Lightning แนะนำ 🌟)",
-            "gemini": "☁️ Google Gemini (Cloud + Dynamic Fallback)",
-            "ollama": "🖥️ Local Ollama (Qwen2.5-Coder:7b ReAct)"
-        }.get(x, x),
+        format_func=lambda x: models_meta[x]["name"],
         key="selected_provider"
     )
 
-    if provider_choice == "nvidia":
-        model_choice = getattr(Config, "NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
-        api_key_input = getattr(Config, "NVIDIA_API_KEY", "")
-    elif provider_choice == "gemini":
-        model_choice = getattr(Config, "GEMINI_MODEL", "gemini-3.5-flash")
-        api_key_input = getattr(Config, "GEMINI_API_KEY", "")
-    else:
-        model_choice = getattr(Config, "OLLAMA_MODEL", "qwen2.5-coder:7b")
-        api_key_input = None
+    current_meta = models_meta[provider_choice]
+    model_choice = current_meta["model_id"]
+    api_key_input = current_meta["api_key"]
 
-    st.info(f"🤖 **โมเดลที่ใช้งานอยู่:**\n\n`{model_choice}`")
+    st.markdown(f"""
+    <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 12px 14px; margin: 10px 0;">
+        <div style="font-size: 0.82rem; color: #94a3b8; margin-bottom: 3px;">🏷️ <b>รุ่น (Model):</b></div>
+        <div style="font-family: monospace; font-size: 0.85rem; color: #38bdf8; background: #0f172a; padding: 4px 8px; border-radius: 4px; word-break: break-all;">{model_choice}</div>
+        <div style="font-size: 0.82rem; color: #94a3b8; margin-top: 8px; margin-bottom: 2px;">📏 <b>Context Window:</b></div>
+        <div style="font-size: 0.88rem; color: #f8fafc; font-weight: 600;">{current_meta['context_window']}</div>
+        <div style="font-size: 0.82rem; color: #94a3b8; margin-top: 8px; margin-bottom: 2px;">🎯 <b>เหมาะกับคำถาม:</b></div>
+        <div style="font-size: 0.82rem; color: #cbd5e1; line-height: 1.4;">{current_meta['best_for']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.expander("📋 ดูเปรียบเทียบทุกโมเดล (All Models)"):
+        for p_key, meta in models_meta.items():
+            st.markdown(f"**{meta['name']}**")
+            st.caption(f"• **รุ่น:** `{meta['model_id']}`\n• **Context Window:** {meta['context_window']}\n• **เหมาะสำหรับ:** {meta['best_for']}")
+            st.write("")
 
     st.divider()
     if st.button("🗑️ ล้างประวัติการแชต (Clear Chat)", use_container_width=True):

@@ -5,9 +5,14 @@ Schema Controller: Handles table catalog and schema inspection endpoints.
 from typing import List
 from fastapi import APIRouter, HTTPException, Query, status
 from src.repositories import DatabaseConnection
-from src.models.schemas import SchemaInspectRequest, SchemaInspectResponse
+from src.models.schemas import (
+    SchemaInspectRequest,
+    SchemaInspectResponse,
+    SqlExecuteRequest,
+    SqlExecuteResponse
+)
 
-router = APIRouter(tags=["Schema"])
+router = APIRouter(tags=["Schema & Database"])
 
 _db = DatabaseConnection()
 
@@ -16,6 +21,22 @@ _db = DatabaseConnection()
 def list_tables() -> List[str]:
     """Lists all available tables in ecommerce_db."""
     return _db.get_available_tables()
+
+
+@router.post("/sql/execute", response_model=SqlExecuteResponse)
+def execute_sql_query(req: SqlExecuteRequest) -> SqlExecuteResponse:
+    """Executes a safe read-only SQL query directly against the online database (TiDB Cloud)."""
+    result = _db.execute_read_only(req.query)
+    if result.get("status") == "error":
+        return SqlExecuteResponse(
+            status="error",
+            message=result.get("message")
+        )
+    return SqlExecuteResponse(
+        status="success",
+        row_count=result.get("row_count", 0),
+        rows=result.get("rows", [])
+    )
 
 
 @router.post("/schema/inspect", response_model=SchemaInspectResponse)

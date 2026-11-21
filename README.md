@@ -1,5 +1,8 @@
 # 🧪 Natural Language to SQL Agent (PoC & Experimental Demo)
 
+> 🔗 **ลองเล่นตัว Demo ออนไลน์ได้ที่:** [https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/](https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/)  
+> *(โฮสต์ไว้บน Streamlit Cloud สำหรับทดสอบการทำงานเบื้องต้น)*
+
 > ⚠️ **คำชี้แจง (Disclaimer):**  
 > โปรเจกต์นี้จัดทำขึ้นเป็น **การทดลอง / พิสูจน์แนวคิด (Proof of Concept - PoC)** เพื่อศึกษาความเป็นไปได้ในการใช้ **AI Agent (ReAct Loop)** ร่วมกับ LLM ในการแปลงคำถามภาษาไทยเป็นคำสั่ง SQL สำหรับวิเคราะห์ข้อมูล E-Commerce **ยังไม่ใช่ระบบที่พร้อมใช้งานบน Production** ความแม่นยำของคำตอบและ SQL ที่สร้างขึ้นอาจมีความคลาดเคลื่อนขึ้นอยู่กับความสามารถของโมเดลภาษาและความซับซ้อนของคำถาม
 
@@ -48,15 +51,19 @@
 
 ## 🛠️ ความสามารถที่มีใน Demo ปัจจุบัน (Current Features)
 
-- **Natural Language to SQL:** รองรับการตั้งคำถามภาษาไทยพื้นฐานเกี่ยวกับยอดขาย สินค้า ลูกค้า และสต็อก
-- **Basic Safety Filter:** มีระบบตรวจจับ Abstract Syntax Tree (AST) ด้วย `sqlglot` เพื่อป้องกันการยิงคำสั่งประเภท Data Manipulation หรือ DDL
-- **Self-Healing Loop (เบื้องต้น):** หากฐานข้อมูลคืนค่า Error เช่น หาคอลัมน์ไม่เจอ Agent จะนำ Error message กลับไปปรับปรุงคำสั่งใหม่
-- **Excel Auto-Export:** ส่งออกผลลัพธ์เป็นไฟล์ `.xlsx` (จัดสไตล์และแบ่ง Sheet ข้อมูล / ข้อมูลสรุป)
-- **LLM Models ที่เปิดให้ใช้งาน (ปัจจุบันรองรับ 2 ค่าย):**
-  - **NVIDIA API** (เช่น `nvidia/nemotron-3.5-lightning-30b-a3b` หรือตระกูล Nemotron / Llama บน NVIDIA Cloud)
-  - **Google Gemini API** (เช่น `gemini-1.5-flash` / `gemini-2.5-flash`)
-  *(ปัจจุบันในเวอร์ชัน Demo นี้จำกัดให้เลือกใช้งานได้ 2 ค่ายนี้เป็นหลัก)*
-- **Web Interface:** มีหน้าจอทดลองใช้งานผ่าน Streamlit (`streamlit_app.py`) และมี CLI (`cli.py`)
+### 1. โมเดล LLM ที่เปิดให้ใช้งาน (ปัจจุบันรองรับ 2 ค่าย)
+- **NVIDIA API:** ใช้งานผ่าน NVIDIA Cloud / NIM (เช่น `nvidia/nemotron-3.5-lightning-30b-a3b`)
+- **Google Gemini API:** ใช้งานผ่าน Google AI Studio (เช่น `gemini-1.5-flash` / `gemini-2.5-flash`)
+
+### 2. เครื่องมือ (Tools) ที่โมเดลสามารถเรียกใช้ได้
+ระบบมี Tool ให้ Agent เรียกใช้งานเพื่อค้นหาและจัดการข้อมูลตามลูป ReAct ดังนี้:
+
+- `inspect_schema`:
+  - **หน้าที่:** ตรวจสอบโครงสร้างตารางจริงในฐานข้อมูล (ชื่อคอลัมน์, ประเภทข้อมูล, Primary Key และ Foreign Key) ของตารางที่ระบุ เพื่อป้องกันไม่ให้โมเดลเดาหรือจินตนาการชื่อฟิลด์เอง
+- `execute_sql`:
+  - **หน้าที่:** นำคำสั่ง SQL `SELECT` (ผ่านการตรวจสอบความปลอดภัยแบบ Read-Only) ไปรันจริงบนฐานข้อมูล แล้วส่งผลลัพธ์ข้อมูลกลับมาในรูปแบบ JSON ให้โมเดลนำไปวิเคราะห์
+- `create_multi_sheet_excel`:
+  - **หน้าที่:** รันคำสั่ง SQL แยกตามแต่ละหัวข้อย่อย แล้วประกอบเป็นไฟล์ Excel (`.xlsx`) แบบหลายแท็บ (Multi-worksheet) พร้อมตกแต่งสีหัวตาราง และบันทึกลงบนหน้าจอ Desktop ให้อัตโนมัติ
 
 ---
 
@@ -112,7 +119,10 @@ DB_PASSWORD=your_password
 
 ### 4. รันระบบ
 
-**รันผ่าน Streamlit Web UI:**
+**ทดลองผ่าน Live Demo (ไม่ต้องติดตั้งในเครื่อง):**
+- ทดลองใช้งานตัว Demo ออนไลน์ได้ที่: [https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/](https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/)
+
+**หรือรันบนเครื่อง Local ผ่าน Streamlit Web UI:**
 ```bash
 python -m streamlit run streamlit_app.py
 ```

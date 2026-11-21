@@ -52,11 +52,10 @@
 - **Basic Safety Filter:** มีระบบตรวจจับ Abstract Syntax Tree (AST) ด้วย `sqlglot` เพื่อป้องกันการยิงคำสั่งประเภท Data Manipulation หรือ DDL
 - **Self-Healing Loop (เบื้องต้น):** หากฐานข้อมูลคืนค่า Error เช่น หาคอลัมน์ไม่เจอ Agent จะนำ Error message กลับไปปรับปรุงคำสั่งใหม่
 - **Excel Auto-Export:** ส่งออกผลลัพธ์เป็นไฟล์ `.xlsx` (จัดสไตล์และแบ่ง Sheet ข้อมูล / ข้อมูลสรุป)
-- **Multi-Engine Support:** มีโค้ดรองรับเชื่อมต่อ Provider ต่างๆ:
-  - NVIDIA API (OpenAI-compatible)
-  - Google Gemini API
-  - Local Ollama
-  - Mock Engine (สำหรับทดสอบ Unit Test)
+- **LLM Models ที่เปิดให้ใช้งาน (ปัจจุบันรองรับ 2 ค่าย):**
+  - **NVIDIA API** (เช่น `nvidia/nemotron-3.5-lightning-30b-a3b` หรือตระกูล Nemotron / Llama บน NVIDIA Cloud)
+  - **Google Gemini API** (เช่น `gemini-1.5-flash` / `gemini-2.5-flash`)
+  *(ปัจจุบันในเวอร์ชัน Demo นี้จำกัดให้เลือกใช้งานได้ 2 ค่ายนี้เป็นหลัก)*
 - **Web Interface:** มีหน้าจอทดลองใช้งานผ่าน Streamlit (`streamlit_app.py`) และมี CLI (`cli.py`)
 
 ---
@@ -94,11 +93,11 @@ cp .env.example .env
 ```
 กำหนดค่าที่จำเป็น เช่น:
 ```env
-# เลือก Provider ที่ต้องการใช้: nvidia, gemini, หรือ ollama
+# เลือก Provider ที่ต้องการใช้: nvidia หรือ gemini
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_api_key_here
 
-# หรือหากใช้ NVIDIA
+# หรือหากเลือกใช้ NVIDIA
 # LLM_PROVIDER=nvidia
 # NVIDIA_API_KEY=your_nvidia_api_key_here
 # NVIDIA_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
@@ -153,10 +152,3 @@ Agent_natural_langauge_to_sql/
 ├── requirements.txt         # รายการแพ็กเกจที่ใช้งาน
 └── README.md
 ```
-
----
-
-## 📝 บันทึกการทดลองและก้าวต่อไป (Future Explorations)
-- [ ] พัฒนา Few-shot Examples และ Schema Linking ให้แม่นยำขึ้นสำหรับคำถามที่มีการ JOIN หลายตาราง
-- [ ] เพิ่มระบบยืนยันความถูกต้องของตัวเลข (Evaluation Benchmark) เทียบกับ Ground Truth SQL
-- [ ] ปรับปรุงการจัดการ Context Window เมื่อฐานข้อมูลมีจำนวนตารางมากเกินไป (Schema Pruning)

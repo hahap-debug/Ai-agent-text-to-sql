@@ -22,7 +22,8 @@ import src.agent
 import src.test_sets
 
 # Auto-reload project modules on Streamlit script re-run
-importlib.reload(src.config.settings)
+config_settings_module = importlib.import_module("src.config.settings")
+importlib.reload(config_settings_module)
 importlib.reload(src.config)
 importlib.reload(src.database)
 importlib.reload(src.prompts.templates)

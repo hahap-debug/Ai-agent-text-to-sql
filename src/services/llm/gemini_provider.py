@@ -21,9 +21,21 @@ def run_gemini_react(
 
     steps: List[AgentStep] = []
     last_sql_box = {"sql": None, "result": None}
+    workflow_state = {
+        "schema_inspected": False,
+        "schema_has_columns": False,
+        "query_succeeded": False,
+        "excel_attempted": False,
+    }
 
     def inspect_schema(tables: List[str]) -> str:
         obs_dict = agent.inspect_schema(tables)
+        workflow_state["schema_inspected"] = True
+        raw_schema = obs_dict.get("raw", {})
+        workflow_state["schema_has_columns"] = any(
+            isinstance(table_info, dict) and bool(table_info.get("columns"))
+            for table_info in raw_schema.values()
+        )
         obs_str = obs_dict.get("summary", "")
         step = AgentStep(
             step_number=len(steps) + 1,
@@ -50,8 +62,9 @@ def run_gemini_react(
         if exec_res.get("status") == "success":
             rows = exec_res.get("rows", [])
             last_sql_box["result"] = rows
+            workflow_state["query_succeeded"] = True
             step.observation = rows
-            ret_msg = json.dumps(exec_res, ensure_ascii=False) + "\n\n[SYSTEM DIRECTIVE: Data retrieval complete. STOP calling any more tools and deliver your Final Answer in Thai immediately.]"
+            ret_msg = json.dumps(exec_res, ensure_ascii=False) + "\n\n[SYSTEM DIRECTIVE: This query result is preliminary. For an in-scope request, create the required Excel workbook with create_multi_sheet_excel before delivering your Final Answer. Do not fetch extra details after workbook success.]"
         else:
             step.is_error = True
             step.observation = f"ERROR: {exec_res.get('message')}"
@@ -64,6 +77,7 @@ def run_gemini_react(
     excel_box = {"file_path": None, "file_name": None, "sheets": None}
 
     def create_multi_sheet_excel(file_name: str, sheets: List[Dict[str, Any]]) -> str:
+        workflow_state["excel_attempted"] = True
         step = AgentStep(
             step_number=len(steps) + 1,
             thought="สร้างรายงาน Excel แบบหลายแท็บ (Multi-Worksheet) พร้อมจัดฟอร์แมตตัวเลขและสีหัวตาราง บันทึกลง Desktop",
@@ -128,6 +142,41 @@ def run_gemini_react(
 
         response = chat.send_message(user_question)
         final_text = getattr(response, "text", "") or ""
+
+        # Gemini's automatic function calling can return a final response after
+        # schema inspection. Resume the same chat so schema-only output cannot
+        # be mistaken for a completed business analysis.
+        continuation_attempts = 0
+        while (
+            not excel_box["file_path"]
+            and (
+                (workflow_state["schema_inspected"] and workflow_state["schema_has_columns"])
+                or workflow_state["query_succeeded"]
+                or workflow_state["excel_attempted"]
+            )
+            and continuation_attempts < 3
+        ):
+            continuation_attempts += 1
+            if workflow_state["query_succeeded"]:
+                continuation_prompt = (
+                    "The SQL query succeeded, but the required Excel workbook has not been created yet. "
+                    "For this in-scope request, call create_multi_sheet_excel using the appropriate read-only query, "
+                    "then provide the final Thai answer. Do not stop after the query result."
+                )
+            elif workflow_state["excel_attempted"]:
+                continuation_prompt = (
+                    "The Excel tool did not complete successfully. Review its error, correct the sheet query or "
+                    "parameters, and call create_multi_sheet_excel again. Then provide the final Thai answer."
+                )
+            else:
+                continuation_prompt = (
+                    "You inspected the schema, but schema information is not the business data requested by the user. "
+                    "Continue now: write a read-only query and call create_multi_sheet_excel to retrieve the requested "
+                    "data and create the workbook, then provide the final Thai answer. Do not answer from schema alone."
+                )
+            response = chat.send_message(continuation_prompt)
+            final_text = getattr(response, "text", "") or final_text
+
     except Exception as e:
         if SQLGuardService.is_quota_error(e):
             quota_exceeded = True
@@ -143,10 +192,25 @@ def run_gemini_react(
             final_text = f"❌ เกิดข้อผิดพลาดในการประมวลผลผ่าน Gemini: {e}"
             error_details = str(e)
 
+    workflow_incomplete = (
+        not excel_box["file_path"]
+        and (
+            (workflow_state["schema_inspected"] and workflow_state["schema_has_columns"])
+            or workflow_state["query_succeeded"]
+            or workflow_state["excel_attempted"]
+        )
+    )
+    if workflow_incomplete and not quota_exceeded:
+        error_details = error_details or "The model stopped before creating the required Excel workbook."
+        final_text = (
+            "⚠️ ตรวจพบโครงสร้างฐานข้อมูลแล้ว แต่ยังดึงข้อมูลหรือสร้างรายงาน Excel ไม่สำเร็จ "
+            "กรุณาลองถามอีกครั้ง"
+        )
+
     last_sql = last_sql_box["sql"]
     last_result = last_sql_box["result"]
 
-    if not quota_exceeded and ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
+    if not quota_exceeded and not workflow_incomplete and ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
         final_text = NarrativeService.format_thai_narrative(user_question, last_sql or "", last_result)
 
     return AgentRunResult(
@@ -155,7 +219,7 @@ def run_gemini_react(
         steps=steps,
         last_executed_sql=last_sql,
         last_query_result=last_result,
-        success=False if quota_exceeded or (error_details and not excel_box["file_path"]) else (True if (last_result is not None or excel_box["file_path"] or final_text) else False),
+        success=False if quota_exceeded or workflow_incomplete or (error_details and not excel_box["file_path"]) else (True if (last_result is not None or excel_box["file_path"] or final_text) else False),
         error_message="Ran out of quota (Gemini 429 RESOURCE_EXHAUSTED)" if quota_exceeded else error_details,
         excel_file_path=excel_box["file_path"],
         excel_file_name=excel_box["file_name"],

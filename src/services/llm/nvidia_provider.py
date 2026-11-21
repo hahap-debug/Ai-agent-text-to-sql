@@ -89,6 +89,12 @@ def run_nvidia_react(
     steps: List[AgentStep] = []
     last_sql_box = {"sql": None, "result": None}
     excel_box = {"file_path": None, "file_name": None, "sheets": None}
+    workflow_state = {
+        "schema_has_columns": False,
+        "query_attempted": False,
+        "query_succeeded": False,
+        "excel_attempted": False,
+    }
 
     client = agent.nvidia_client
     if not client:
@@ -119,6 +125,7 @@ def run_nvidia_react(
     max_turns = agent.max_steps or 6
     final_text = ""
     error_details = None
+    continuation_attempts = 0
 
     for turn in range(max_turns):
         try:
@@ -126,7 +133,7 @@ def run_nvidia_react(
                 model=agent.model_name,
                 messages=messages,
                 tools=NVIDIA_TOOLS,
-                tool_choice="auto",
+                tool_choice="none" if excel_box["file_path"] else "auto",
                 temperature=0.1,
                 max_tokens=1500
             )
@@ -138,6 +145,40 @@ def run_nvidia_react(
                 final_text = msg.content or ""
                 if not final_text and getattr(msg, "reasoning_content", None):
                     final_text = str(msg.reasoning_content)
+                workflow_needs_excel = (
+                    workflow_state["schema_has_columns"]
+                    or workflow_state["query_attempted"]
+                    or workflow_state["excel_attempted"]
+                ) and not excel_box["file_path"]
+                if workflow_needs_excel and continuation_attempts < 3:
+                    continuation_attempts += 1
+                    messages.append(msg)
+                    if workflow_state["query_succeeded"]:
+                        continuation_prompt = (
+                            "The SQL query succeeded, but the required Excel workbook has not been created. "
+                            "Continue by calling create_multi_sheet_excel with the appropriate read-only query, "
+                            "then provide the final Thai answer. Do not stop after execute_sql."
+                        )
+                    elif workflow_state["schema_has_columns"]:
+                        continuation_prompt = (
+                            "You inspected a usable schema, but schema information is not the requested business data. "
+                            "Continue by writing a read-only query and calling create_multi_sheet_excel to retrieve "
+                            "the requested data and create the workbook. Then provide the final Thai answer."
+                        )
+                    else:
+                        continuation_prompt = (
+                            "The previous database operation did not complete the requested analysis. Review the tool "
+                            "error in the conversation, correct the query if needed, and continue until the required "
+                            "Excel workbook is created. Then provide the final Thai answer."
+                        )
+                    messages.append({"role": "user", "content": continuation_prompt})
+                    continue
+                if workflow_needs_excel:
+                    error_details = "The model stopped before creating the required Excel workbook."
+                    final_text = (
+                        "⚠️ ตรวจพบโครงสร้างหรือเริ่มค้นข้อมูลแล้ว แต่ยังสร้างรายงาน Excel ไม่สำเร็จ "
+                        "กรุณาลองถามอีกครั้ง"
+                    )
                 break
 
             # Handle Tool Calls
@@ -161,6 +202,11 @@ def run_nvidia_react(
                 if fn_name == "inspect_schema":
                     tables = fn_args.get("tables", [])
                     obs_dict = agent.inspect_schema(tables)
+                    raw_schema = obs_dict.get("raw", {})
+                    workflow_state["schema_has_columns"] = any(
+                        isinstance(table_info, dict) and bool(table_info.get("columns"))
+                        for table_info in raw_schema.values()
+                    )
                     obs_str = obs_dict.get("summary", "") #summary = schme in easy to read format.
                     step.observation = obs_str
                     tool_output = obs_str
@@ -169,8 +215,10 @@ def run_nvidia_react(
                     query = fn_args.get("query", "")
                     clean_query = SQLGuardService.sanitize_sql_limits(query, user_question)
                     last_sql_box["sql"] = clean_query
+                    workflow_state["query_attempted"] = True
                     exec_res = agent.execute_sql(clean_query)
                     if exec_res.get("status") == "success":
+                        workflow_state["query_succeeded"] = True
                         rows = exec_res.get("rows", [])
                         last_sql_box["result"] = rows
                         step.observation = rows
@@ -182,6 +230,7 @@ def run_nvidia_react(
                 elif fn_name == "create_multi_sheet_excel":
                     fname = fn_args.get("file_name", "report.xlsx")
                     sheets = fn_args.get("sheets", [])
+                    workflow_state["excel_attempted"] = True
                     res = agent.create_multi_sheet_excel(fname, sheets)
                     if res.get("status") == "success":
                         excel_box["file_path"] = res.get("file_path")
@@ -212,10 +261,25 @@ def run_nvidia_react(
             final_text = f"❌ เกิดข้อผิดพลาดในการประมวลผลผ่าน NVIDIA NIM: {e}"
             break
 
+    workflow_incomplete = (
+        not excel_box["file_path"]
+        and (
+            workflow_state["schema_has_columns"]
+            or workflow_state["query_attempted"]
+            or workflow_state["excel_attempted"]
+        )
+    )
+    if workflow_incomplete:
+        error_details = error_details or "The model stopped before creating the required Excel workbook."
+        final_text = (
+            "⚠️ ตรวจพบโครงสร้างหรือเริ่มค้นข้อมูลแล้ว แต่ยังสร้างรายงาน Excel ไม่สำเร็จ "
+            "กรุณาลองถามอีกครั้ง"
+        )
+
     last_sql = last_sql_box["sql"]
     last_result = last_sql_box["result"]
 
-    if ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
+    if not workflow_incomplete and ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
         final_text = NarrativeService.format_thai_narrative(user_question, last_sql or "", last_result)
 
     return AgentRunResult(

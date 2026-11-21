@@ -1,10 +1,72 @@
 # 🧪 Natural Language to SQL Agent (PoC & Experimental Demo)
 
-> 🔗 **ลองเล่นตัว Demo ออนไลน์ได้ที่:** [https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/](https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/)  
-> *(โฮสต์ไว้บน Streamlit Cloud สำหรับทดสอบการทำงานเบื้องต้น)*
-
 > ⚠️ **คำชี้แจง (Disclaimer):**  
 > โปรเจกต์นี้จัดทำขึ้นเป็น **การทดลอง / พิสูจน์แนวคิด (Proof of Concept - PoC)** เพื่อศึกษาความเป็นไปได้ในการใช้ **AI Agent (ReAct Loop)** ร่วมกับ LLM ในการแปลงคำถามภาษาไทยเป็นคำสั่ง SQL สำหรับวิเคราะห์ข้อมูล E-Commerce **ยังไม่ใช่ระบบที่พร้อมใช้งานบน Production** ความแม่นยำของคำตอบและ SQL ที่สร้างขึ้นอาจมีความคลาดเคลื่อนขึ้นอยู่กับความสามารถของโมเดลภาษาและความซับซ้อนของคำถาม
+
+---
+
+## 🚀 วิธีการรันและทดลองใช้งาน (Quick Start & Run Demo)
+
+### 1. ทดลองผ่าน Live Demo ออนไลน์ (ไม่ต้องติดตั้ง)
+คลิกเปิดใช้งานบนเบราว์เซอร์ได้ทันทีผ่าน Streamlit Cloud:  
+👉 **[https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/](https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/)**
+
+---
+
+### 2. หรือรันบนเครื่องตนเอง (Run Locally)
+
+**ความต้องการของระบบ:** Python 3.10+ และฐานข้อมูล (มี SQLite จำลองในโฟลเดอร์ `data/ecommerce.db` พร้อมทดสอบ)
+
+1. **ติดตั้ง Dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **ตั้งค่าสภาพแวดล้อม (`.env`):**
+   คัดลอก `.env.example` เป็น `.env` แล้วระบุ API Key ของโมเดลที่ต้องการ:
+   ```bash
+   cp .env.example .env
+   ```
+   ตัวอย่างการตั้งค่า:
+   ```env
+   # เลือกโมเดลที่ต้องการใช้: gemini หรือ nvidia
+   LLM_PROVIDER=gemini
+   GEMINI_API_KEY=your_gemini_api_key_here
+
+   # หรือหากเลือกใช้ NVIDIA API
+   # LLM_PROVIDER=nvidia
+   # NVIDIA_API_KEY=your_nvidia_api_key_here
+   # NVIDIA_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
+
+   # ข้อมูลฐานข้อมูล (ค่าเริ่มต้นจะใช้ SQLite หรือระบุ MySQL ของตนเอง)
+   DB_HOST=127.0.0.1
+   DB_PORT=3306
+   DB_NAME=ecommerce_db
+   DB_USER=ecommerce_reader
+   DB_PASSWORD=your_password
+   ```
+
+3. **สั่งรันระบบ:**
+   - **เปิดหน้าเว็บแชต (Streamlit):**
+     ```bash
+     python -m streamlit run streamlit_app.py
+     ```
+     เข้าใช้งานผ่านเบราว์เซอร์ที่ `http://localhost:8501`
+
+   - **หรือรันผ่าน Terminal (CLI):**
+     ```bash
+     python cli.py
+     ```
+
+---
+
+## 💡 ตัวอย่างคำถามสำหรับทดสอบ (Test Prompts)
+
+คำถามภาษาไทยพื้นฐานที่โครงสร้างข้อมูลรองรับและเหมาะสำหรับทดสอบ Concept:
+- *"สินค้า 5 อันดับแรกที่ราคาแพงที่สุดมีอะไรบ้าง"*
+- *"มีสินค้าอะไรบ้างที่สต็อกในคลังเหลือน้อยกว่า 10 ชิ้น"*
+- *"ขอดูข้อมูลลูกค้าทั้งหมด 10 คนแรก"*
+- *"ช่วงนี้แบรนด์ไหนมียอดขายรวมสูงสุด 3 อันดับแรก"*
 
 ---
 
@@ -79,69 +141,6 @@
    - การทำงานแบบ ReAct มีหลายขั้นตอน (Inspect -> Generate -> Run -> Interpret) ส่งผลให้ใช้เวลาในการประมวลผลต่อหนึ่งคำถามพอสมควร และมีค่าใช้จ่าย Token ของ LLM
 4. **ความแม่นยำของการสรุปผล (Narrative):**
    - ข้อความสรุปเชิงธุรกิจเป็นการวิเคราะห์ของโมเดลตามตัวเลขที่ได้มา ไม่สามารถนำไปใช้ตัดสินใจทางธุรกิจระดับวิกฤตได้โดยปราศจากการตรวจสอบซ้ำ (Human-in-the-loop)
-
----
-
-## 💻 วิธีการติดตั้งและรัน Demo (Getting Started)
-
-### 1. สภาพแวดล้อมที่รองรับ
-- Python 3.10 หรือใหม่กว่า
-- ฐานข้อมูล MySQL / TiDB / SQLite (ในโฟลเดอร์ `data/` มีฐานข้อมูลจำลอง `ecommerce.db` สำหรับทดสอบ)
-
-### 2. ติดตั้ง Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 3. ตั้งค่าสภาพแวดล้อม (.env)
-คัดลอกไฟล์ `.env.example` เป็น `.env` และกำหนดค่าเชื่อมต่อ:
-```bash
-cp .env.example .env
-```
-กำหนดค่าที่จำเป็น เช่น:
-```env
-# เลือก Provider ที่ต้องการใช้: nvidia หรือ gemini
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=your_gemini_api_key_here
-
-# หรือหากเลือกใช้ NVIDIA
-# LLM_PROVIDER=nvidia
-# NVIDIA_API_KEY=your_nvidia_api_key_here
-# NVIDIA_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
-
-# ข้อมูลเชื่อมต่อ Database (หรือชี้ไปยัง SQLite สำหรับทดสอบในเครื่อง)
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_NAME=ecommerce_db
-DB_USER=ecommerce_reader
-DB_PASSWORD=your_password
-```
-
-### 4. รันระบบ
-
-**ทดลองผ่าน Live Demo (ไม่ต้องติดตั้งในเครื่อง):**
-- ทดลองใช้งานตัว Demo ออนไลน์ได้ที่: [https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/](https://ai-agent-text-to-sql-9eqtjzu7lvxagy2xezuqhx.streamlit.app/)
-
-**หรือรันบนเครื่อง Local ผ่าน Streamlit Web UI:**
-```bash
-python -m streamlit run streamlit_app.py
-```
-เข้าใช้งานผ่านเบราว์เซอร์ที่ `http://localhost:8501`
-
-**หรือรันผ่าน Command Line (CLI):**
-```bash
-python cli.py
-```
-
----
-
-## 💡 ตัวอย่างคำถามสำหรับทดสอบ (Test Prompts)
-
-คำถามพื้นฐานที่โครงสร้างข้อมูลรองรับและเหมาะสำหรับทดสอบ Concept:
-- *"สินค้า 5 อันดับแรกที่ราคาแพงที่สุดมีอะไรบ้าง"*
-- *"มีสินค้าอะไรบ้างที่สต็อกในคลังเหลือน้อยกว่า 10 ชิ้น"*
-- *"ขอดูข้อมูลลูกค้าทั้งหมด 10 คนแรก"*
-- *"ช่วงนี้แบรนด์ไหนมียอดขายรวมสูงสุด 3 อันดับแรก"*
 
 ---
 

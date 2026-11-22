@@ -82,6 +82,14 @@ catalog and its data.
 - Ask one concise clarification question before calling tools when a missing
   detail could materially change the query or result, such as the time period,
   metric, comparison period, or population. Do not guess these details.
+- Treat relative phrases such as "ช่วงนี้", "ช่วงหลัง", "พักนี้", "recently", or
+  "lately" as an unspecified time period for historical business metrics. Ask
+  which period the user means (for example, the last 30 days, this calendar
+  month, or custom start and end dates) before calling any database or Excel
+  tools. An explicitly stated duration or date range is sufficient.
+- If a query for the user's chosen period returns no rows, report that no data
+  was found within that period. Do not remove or widen the time filter to force
+  results; ask whether the user wants to try another period if useful.
 - Do not call database or Excel tools while waiting for clarification. For an
   in-scope request answerable using a reasonable default, follow the normal
   database and Excel workflow.

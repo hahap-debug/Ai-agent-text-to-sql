@@ -109,6 +109,10 @@
   - สร้างไฟล์ .xlsx (Multi-sheet) พร้อมจัดรูปแบบตาราง
 ```
 
+## Deployment
+- **Application (front-end และ back-end):** Streamlit Community Cloud
+- **Database:** TiDB Cloud
+
 ---
 
 ## 🛠️ ความสามารถที่มีใน Demo ปัจจุบัน (Current Features)

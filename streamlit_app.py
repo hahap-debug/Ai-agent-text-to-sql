@@ -7,33 +7,6 @@ import streamlit as st
 import json
 from pathlib import Path
 import pandas as pd
-import importlib
-
-import src.config
-import src.config.settings
-import src.database
-import src.prompts.templates
-import src.prompts
-import src.services.excel_service
-import src.services.agent_service
-import src.services.llm.nvidia_provider
-import src.services.coreference_service
-import src.agent
-import src.test_sets
-
-# Auto-reload project modules on Streamlit script re-run
-config_settings_module = importlib.import_module("src.config.settings")
-importlib.reload(config_settings_module)
-importlib.reload(src.config)
-importlib.reload(src.database)
-importlib.reload(src.prompts.templates)
-importlib.reload(src.prompts)
-importlib.reload(src.services.excel_service)
-importlib.reload(src.services.agent_service)
-importlib.reload(src.services.llm.nvidia_provider)
-importlib.reload(src.services.coreference_service)
-importlib.reload(src.agent)
-importlib.reload(src.test_sets)
 
 from src.config import Config
 from src.database import DatabaseConnection

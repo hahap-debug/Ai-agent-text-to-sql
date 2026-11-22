@@ -59,46 +59,14 @@ def is_quota_error(e: Exception) -> bool:
         "quotaexceeded"
     ])
 
-def filter_display_fields(rows: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
-    """
-    Post-Execution Field Filtering Rule:
-    Filters out internal/system clutter (e.g. id, *_id, password_hash, created_at,
-    updated_at, slug, sort_order, alt_text) from query results before presenting to user/UI.
-    Leaves only pure business fields (names, prices, metrics, descriptions).
-    """
-    if not rows or not isinstance(rows, list):
-        return rows
+def filter_display_fields(
+    rows: Optional[List[Dict[str, Any]]],
+    preserve_fields: Optional[List[str]] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Backward-compatible delegate to the shared field-filtering policy."""
+    from src.services.sql_guard_service import SQLGuardService
 
-    EXACT_DROP = {
-        "id", "password_hash", "remember_token", "auth_token", "secret", "salt",
-        "created_at", "updated_at", "added_at", "performed_at", "sent_at",
-        "slug", "sort_order", "alt_text"
-    }
-
-    filtered = []
-    for row in rows:
-        if not isinstance(row, dict):
-            filtered.append(row)
-            continue
-
-        clean_row = {}
-        for col, val in row.items():
-            col_l = col.lower()
-            # 1. Exact drop
-            if col_l in EXACT_DROP:
-                continue
-            # 2. Foreign keys ending with '_id' (e.g., user_id, product_id, order_id)
-            if col_l.endswith("_id"):
-                continue
-            clean_row[col] = val
-
-        # Safety Guard: If row was stripped completely, restore non-sensitive columns
-        if not clean_row and row:
-            clean_row = {k: v for k, v in row.items() if k.lower() != "password_hash"}
-
-        filtered.append(clean_row)
-
-    return filtered
+    return SQLGuardService.filter_display_fields(rows, preserve_fields=preserve_fields)
 
 def sanitize_sql_limits(sql: str, question: str) -> str:
     """

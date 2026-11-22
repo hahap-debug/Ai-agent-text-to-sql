@@ -114,10 +114,21 @@ class AgentService:
                 }
 
             rows = query_res.get("rows", [])
-            filtered_rows = SQLGuardService.filter_display_fields(rows)
             columns = query_res.get("columns", [])
-            if not columns and filtered_rows and isinstance(filtered_rows[0], dict):
-                columns = list(filtered_rows[0].keys())
+            if not columns and rows and isinstance(rows[0], dict):
+                columns = list(rows[0].keys())
+
+            # Excel is a user-facing export: keep the fields explicitly selected by
+            # the query while applying the same unconditional secret redaction.
+            filtered_rows = SQLGuardService.filter_display_fields(
+                rows,
+                preserve_fields=columns,
+            )
+            visible_columns = SQLGuardService.filter_display_fields(
+                [{column: None for column in columns}],
+                preserve_fields=columns,
+            )[0].keys() if columns else []
+            visible_columns = list(visible_columns)
 
             required_fields = s.get("required_fields") or []
             if isinstance(required_fields, str):
@@ -137,6 +148,20 @@ class AgentService:
                         "error": (
                             f"Sheet '{s_name}' declares required_fields={required_fields}, but the query "
                             f"does not return: {missing_fields}. Select these fields with matching output aliases."
+                        )
+                    }
+
+                visible_column_names = {str(column).casefold() for column in visible_columns}
+                protected_required = [
+                    field for field, resolved in zip(required_fields, resolved_required)
+                    if resolved is not None and str(resolved).casefold() not in visible_column_names
+                ]
+                if protected_required:
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"Sheet '{s_name}' marks protected fields as required: {protected_required}. "
+                            "Remove them from the report request."
                         )
                     }
 
@@ -182,7 +207,7 @@ class AgentService:
             if unique_by:
                 # Resolve declared keys against the query's output labels, case-insensitively.
                 # The model should use a SELECT alias when the source column is qualified.
-                output_columns = {str(column).casefold(): column for column in columns}
+                output_columns = {str(column).casefold(): column for column in visible_columns}
                 resolved_keys = [output_columns.get(str(key).casefold()) for key in unique_by]
                 missing_keys = [key for key, resolved in zip(unique_by, resolved_keys) if resolved is None]
                 if missing_keys:
@@ -222,7 +247,7 @@ class AgentService:
 
             sheets_data.append({
                 "sheet_name": s_name,
-                "columns": columns,
+                "columns": visible_columns,
                 "rows": filtered_rows,
                 "theme_color": theme,
                 "row_count": len(filtered_rows),
@@ -230,8 +255,8 @@ class AgentService:
                 "row_limit": query_res.get("row_limit"),
                 "insight_context": InsightContextService.build(
                     query=clean_query,
-                    rows=rows,
-                    columns=columns,
+                    rows=filtered_rows,
+                    columns=visible_columns,
                     truncated=query_res.get("truncated", False),
                     dialect="mysql" if self.is_mysql else "sqlite",
                 )
@@ -389,8 +414,6 @@ class AgentService:
 
         res.user_question = user_question
         res.expanded_question = expanded if (expanded and expanded != user_question) else None
-        if res.last_query_result:
-            res.last_query_result = self.filter_display_fields(res.last_query_result)
 
         # 100% Guaranteed Excel Export: Every query exports an Excel workbook to Desktop
         if not getattr(res, "excel_file_path", None) and res.last_query_result and len(res.last_query_result) > 0:
@@ -398,11 +421,22 @@ class AgentService:
             import re
             clean_q = re.sub(r'[^a-zA-Z0-9_\s]', '', user_question).strip().replace(' ', '_')[:30]
             auto_fname = f"BI_Data_Report_{clean_q}.xlsx" if clean_q else "Executive_BI_Report.xlsx"
+            raw_rows = res.last_query_result
+            selected_columns = list(raw_rows[0].keys()) if raw_rows and isinstance(raw_rows[0], dict) else []
+            export_rows = SQLGuardService.filter_display_fields(
+                raw_rows,
+                preserve_fields=selected_columns,
+            )
+            export_columns = SQLGuardService.filter_display_fields(
+                [{column: None for column in selected_columns}],
+                preserve_fields=selected_columns,
+            )[0].keys() if selected_columns else []
             excel_out = ExcelService.create_workbook(
                 file_name=auto_fname,
                 sheets=[{
                     "sheet_name": "Data_Export",
-                    "rows": res.last_query_result,
+                    "columns": list(export_columns),
+                    "rows": export_rows,
                     "theme_color": "navy"
                 }]
             )
@@ -410,6 +444,9 @@ class AgentService:
                 res.excel_file_path = excel_out.get("file_path")
                 res.excel_file_name = excel_out.get("file_name")
                 res.excel_sheets = excel_out.get("sheets")
+
+        if res.last_query_result:
+            res.last_query_result = self.filter_display_fields(res.last_query_result)
 
         return res
 

@@ -5,7 +5,7 @@ limit sanitization, quota checks, and Action JSON parsing.
 
 import json
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterable
 from src.validator import validate_ast_safety, SQLSecurityError, SQLSyntaxError
 
 
@@ -72,20 +72,36 @@ class SQLGuardService:
         ])
 
     @staticmethod
-    def filter_display_fields(rows: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    def filter_display_fields(
+        rows: Optional[List[Dict[str, Any]]],
+        preserve_fields: Optional[Iterable[str]] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
         """
-        Post-Execution Field Filtering Rule:
-        Filters out internal/system clutter (e.g. id, *_id, password_hash, created_at,
-        updated_at, slug, sort_order, alt_text) from query results before presenting to user/UI.
+        Hide internal fields by default while allowing callers to retain selected output fields.
+        Sensitive credentials are always removed, even when explicitly preserved.
         """
         if not rows or not isinstance(rows, list):
             return rows
 
-        EXACT_DROP = {
-            "id", "password_hash", "remember_token", "auth_token", "secret", "salt",
-            "created_at", "updated_at", "added_at", "performed_at", "sent_at",
-            "slug", "sort_order", "alt_text"
+        sensitive_exact = {
+            "password", "password_hash", "remember_token", "auth_token", "token",
+            "secret", "secret_key", "salt", "api_key", "access_key",
         }
+        hidden_by_default = {
+            "id", "created_at", "updated_at", "added_at", "performed_at", "sent_at",
+            "slug", "sort_order", "alt_text",
+        }
+        if isinstance(preserve_fields, str):
+            preserve_fields = [preserve_fields]
+        preserved = {str(field).casefold() for field in (preserve_fields or [])}
+
+        def is_sensitive(column: str) -> bool:
+            name = column.casefold()
+            return (
+                name in sensitive_exact
+                or name.startswith(("password_", "secret_", "token_"))
+                or name.endswith(("_password", "_secret", "_token", "_api_key", "_access_key"))
+            )
 
         filtered = []
         for row in rows:
@@ -95,16 +111,19 @@ class SQLGuardService:
 
             clean_row = {}
             for col, val in row.items():
-                col_l = col.lower()
-                if col_l in EXACT_DROP:
+                col_l = str(col).casefold()
+                if is_sensitive(col_l):
                     continue
-                if col_l.endswith("_id"):
+                if col_l in preserved:
+                    clean_row[col] = val
+                    continue
+                if col_l in hidden_by_default or col_l.endswith("_id"):
                     continue
                 clean_row[col] = val
 
-            # Safety Guard: If row was stripped completely, restore non-sensitive columns
+            # Preserve the legacy ID-only behavior without restoring protected fields.
             if not clean_row and row:
-                clean_row = {k: v for k, v in row.items() if k.lower() != "password_hash"}
+                clean_row = {k: v for k, v in row.items() if not is_sensitive(str(k))}
 
             filtered.append(clean_row)
 

@@ -3,11 +3,125 @@ Narrative Service: Formats SQL query outputs into professional
 Thai Executive Business Reports (Summary, Insights, Actionable Steps).
 """
 
+import json
+import re
 from typing import List, Dict, Any
 
 
 class NarrativeService:
     """Service providing executive business narrative synthesis in Thai."""
+
+    REPAIR_SYSTEM_PROMPT = """You write the final Thai executive report for an e-commerce data analysis.
+Use only facts present in the supplied insight context. Do not invent metrics, trends, causes, or claims.
+Do not include internal reasoning, drafting notes, placeholders, or mention that you are revising the answer.
+Return a complete report with Executive Summary, Key Insights, and Actionable Next Steps headings.
+If the evidence is insufficient for a specific insight, say so plainly and give a next step that does not assume unsupported facts."""
+
+    _REQUIRED_HEADINGS = (
+        "สรุปผลลัพธ์สำคัญ",
+        "ข้อมูลเชิงลึก",
+        ("คำแนะนำเชิงธุรกิจ", "ข้อเสนอแนะเชิงธุรกิจ"),
+    )
+    _DRAFT_OR_PLACEHOLDER = re.compile(
+        r"wait,\s*i\s+should|i['’]ll\s+rephrase|let\s+me\s+(adjust|revise)|"
+        r"todo|tbd|placeholder|ขึ้นอยู่กับข้อมูลในไฟล์|ปีไหนมีลูกค้ามากที่สุด",
+        re.IGNORECASE,
+    )
+    _INCOMPLETE_ENDINGS = ("เพิ่มเต", "และ", "หรือ", "เช่น", "เพื่อ", "โดย", "ได้แก่", "…", "...")
+
+    @classmethod
+    def is_complete_executive_answer(
+        cls,
+        answer: str,
+        model_truncated: bool = False,
+    ) -> bool:
+        """Reject drafts, placeholders, missing sections, and known truncated endings."""
+        if model_truncated or not answer or cls._DRAFT_OR_PLACEHOLDER.search(answer):
+            return False
+
+        if not all(
+            (any(heading in answer for heading in requirement)
+             if isinstance(requirement, tuple) else requirement in answer)
+            for requirement in cls._REQUIRED_HEADINGS
+        ):
+            return False
+
+        stripped = answer.rstrip()
+        if stripped.endswith(cls._INCOMPLETE_ENDINGS):
+            return False
+        if stripped.endswith((":", "-", "*")):
+            return False
+
+        sections = re.split(
+            r"(?=📊\s*\*\*สรุปผลลัพธ์สำคัญ|🔍\s*\*\*ข้อมูลเชิงลึก|🎯\s*\*\*(?:คำแนะนำ|ข้อเสนอแนะ)เชิงธุรกิจ)",
+            answer,
+        )
+        for section in sections:
+            if any(heading in section for heading in (
+                "สรุปผลลัพธ์สำคัญ", "ข้อมูลเชิงลึก", "คำแนะนำเชิงธุรกิจ", "ข้อเสนอแนะเชิงธุรกิจ"
+            )):
+                body = re.sub(r"^.*?:\s*", "", section, count=1, flags=re.DOTALL).strip()
+                if not body or body in {"-", "1.", "•"}:
+                    return False
+        return True
+
+    @classmethod
+    def build_repair_prompt(
+        cls,
+        question: str,
+        file_name: str,
+        insight_context: List[Dict[str, Any]],
+        draft: str,
+    ) -> str:
+        """Create a no-tools repair request with the same bounded evidence."""
+        return (
+            f"คำถามผู้ใช้: {question}\n"
+            f"ไฟล์ Excel ที่สร้างสำเร็จ: {file_name}\n"
+            "หลักฐานจากผล query ที่ใช้สร้างไฟล์ (ใช้ข้อมูลนี้เท่านั้น):\n"
+            f"{json.dumps(insight_context, ensure_ascii=False, default=str)}\n\n"
+            "ร่างคำตอบที่ต้องตรวจและเขียนใหม่ให้สมบูรณ์:\n"
+            f"{draft}\n\n"
+            "ส่งเฉพาะรายงานภาษาไทยฉบับสมบูรณ์ตามสามหัวข้อที่กำหนด ห้ามใส่ข้อความคิดทบทวน "
+            "ห้ามสร้างตัวเลขหรือแนวโน้มที่ไม่มีในหลักฐาน และถ้าหลักฐานไม่พอให้บอกตรง ๆ"
+        )
+
+    @classmethod
+    def response_was_truncated(cls, response: Any) -> bool:
+        """Read provider finish metadata when available."""
+        choices = getattr(response, "choices", None) or []
+        for choice in choices:
+            reason = str(getattr(choice, "finish_reason", "")).casefold()
+            if reason in {"length", "max_tokens", "max_token", "maxtokens"}:
+                return True
+        candidates = getattr(response, "candidates", None) or []
+        for candidate in candidates:
+            reason = str(getattr(candidate, "finish_reason", "")).casefold()
+            if "max_tokens" in reason or "maxtokens" in reason:
+                return True
+        return False
+
+    @staticmethod
+    def format_export_fallback(
+        file_name: str,
+        insight_context: List[Dict[str, Any]],
+    ) -> str:
+        """Return a factual complete response if the model cannot repair its draft."""
+        total_rows = sum(int(sheet.get("row_count", 0) or 0) for sheet in insight_context)
+        was_truncated = any(bool(sheet.get("truncated")) for sheet in insight_context)
+        if was_truncated:
+            insight_line = "ผลที่ส่งออกถึงขีดจำกัดของชีต จึงยังยืนยันภาพรวมของข้อมูลทั้งหมดไม่ได้"
+            next_step = "ระบุช่วงเวลาหรือเงื่อนไขให้แคบลงเพื่อวิเคราะห์ข้อมูลที่เหลือให้ครบ"
+        else:
+            insight_line = "ข้อมูลสำหรับยืนยันแนวโน้มหรือข้อสรุปเชิงธุรกิจยังไม่เพียงพอในผลสรุปที่ได้รับ"
+            next_step = "ตรวจดูข้อมูลในชีตที่เกี่ยวข้อง หรือขอให้สรุปด้วยตัวชี้วัดที่ต้องการโดยตรง"
+        return (
+            "📊 **สรุปผลลัพธ์สำคัญ (Executive Summary):**\n"
+            f"สร้างไฟล์ Excel `{file_name}` สำเร็จ มีข้อมูลจาก query รวม {total_rows:,} แถว\n\n"
+            "🔍 **ข้อมูลเชิงลึก (Key Insights):**\n"
+            f"- {insight_line}\n\n"
+            "🎯 **คำแนะนำเชิงธุรกิจ (Actionable Next Steps):**\n"
+            f"- {next_step}"
+        )
 
     @staticmethod
     def format_thai_narrative(

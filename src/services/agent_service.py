@@ -9,6 +9,7 @@ from src.repositories import DatabaseConnection, QueryRepository, SchemaReposito
 from src.models.entities import AgentStep, AgentRunResult
 from src.services.sql_guard_service import SQLGuardService
 from src.services.narrative_service import NarrativeService
+from src.services.insight_context_service import InsightContextService
 from src.services.coreference_service import CoreferenceService
 from src.services.llm import (
     run_gemini_react,
@@ -118,17 +119,152 @@ class AgentService:
             if not columns and filtered_rows and isinstance(filtered_rows[0], dict):
                 columns = list(filtered_rows[0].keys())
 
+            required_fields = s.get("required_fields") or []
+            if isinstance(required_fields, str):
+                required_fields = [required_fields]
+            if required_fields:
+                output_columns = {str(column).casefold(): column for column in columns}
+                resolved_required = [
+                    output_columns.get(str(field).casefold()) for field in required_fields
+                ]
+                missing_fields = [
+                    field for field, resolved in zip(required_fields, resolved_required)
+                    if resolved is None
+                ]
+                if missing_fields:
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"Sheet '{s_name}' declares required_fields={required_fields}, but the query "
+                            f"does not return: {missing_fields}. Select these fields with matching output aliases."
+                        )
+                    }
+
+                for row_index, row in enumerate(rows, start=1):
+                    empty_fields = [
+                        field for field, resolved in zip(required_fields, resolved_required)
+                        if row.get(resolved) is None
+                        or (isinstance(row.get(resolved), str) and not row.get(resolved).strip())
+                    ]
+                    if empty_fields:
+                        return {
+                            "status": "error",
+                            "error": (
+                                f"Sheet '{s_name}' has missing required data in {empty_fields} "
+                                f"at data row {row_index}. Add query conditions to return only rows "
+                                "where these required fields have real values, or revise required_fields "
+                                "if those fields are optional for this request."
+                            )
+                        }
+
+            row_grain = s.get("row_grain")
+            if row_grain is not None:
+                row_grain = str(row_grain).strip().lower()
+                if row_grain not in {"entity", "aggregate", "detail"}:
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"Sheet '{s_name}' has unsupported row_grain '{row_grain}'. "
+                            "Use 'entity', 'aggregate', or 'detail'."
+                        )
+                    }
+            unique_by = s.get("unique_by") or []
+            if isinstance(unique_by, str):
+                unique_by = [unique_by]
+            if row_grain in {"entity", "aggregate"} and not unique_by:
+                return {
+                    "status": "error",
+                    "error": (
+                        f"Sheet '{s_name}' declares row_grain='{row_grain}' and must also declare "
+                        "unique_by with the entity key (for example ['user_id'])."
+                    )
+                }
+            if unique_by:
+                # Resolve declared keys against the query's output labels, case-insensitively.
+                # The model should use a SELECT alias when the source column is qualified.
+                output_columns = {str(column).casefold(): column for column in columns}
+                resolved_keys = [output_columns.get(str(key).casefold()) for key in unique_by]
+                missing_keys = [key for key, resolved in zip(unique_by, resolved_keys) if resolved is None]
+                if missing_keys:
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"Sheet '{s_name}' declares unique_by={unique_by}, but the query result "
+                            f"does not include those output columns: {missing_keys}. Select each key "
+                            "with a matching output alias and retry."
+                        )
+                    }
+                seen = set()
+                for row_index, row in enumerate(rows, start=1):
+                    key_value = tuple(row.get(key) for key in resolved_keys)
+                    null_count = sum(value is None for value in key_value)
+                    if null_count:
+                        if row_grain == "detail" and null_count == len(key_value):
+                            # An all-NULL child key is a valid unmatched row from a LEFT JOIN.
+                            continue
+                        return {
+                            "status": "error",
+                            "error": (
+                                f"Sheet '{s_name}' has an incomplete key from unique_by={unique_by} "
+                                f"at data row {row_index}. Entity and aggregate keys must be non-null; "
+                                "for a detail grain, all key columns may be NULL together for an unmatched LEFT JOIN row."
+                            )
+                        }
+                    if key_value in seen:
+                        return {
+                            "status": "error",
+                            "error": (
+                                f"Sheet '{s_name}' must contain one row per {', '.join(unique_by)}, "
+                                f"but a duplicate key was found at data row {row_index}. Check whether a JOIN is multiplying rows."
+                            )
+                        }
+                    seen.add(key_value)
+
             sheets_data.append({
                 "sheet_name": s_name,
                 "columns": columns,
                 "rows": filtered_rows,
-                "theme_color": theme
+                "theme_color": theme,
+                "row_count": len(filtered_rows),
+                "truncated": query_res.get("truncated", False),
+                "row_limit": query_res.get("row_limit"),
+                "insight_context": InsightContextService.build(
+                    query=clean_query,
+                    rows=rows,
+                    columns=columns,
+                    truncated=query_res.get("truncated", False),
+                    dialect="mysql" if self.is_mysql else "sqlite",
+                )
             })
 
-        return ExcelService.create_workbook(
+        result = ExcelService.create_workbook(
             file_name=file_name,
             sheets=sheets_data
         )
+        if result.get("status") == "success":
+            result["sheet_results"] = [
+                {
+                    "sheet_name": sheet["sheet_name"],
+                    "row_count": sheet["row_count"],
+                    "truncated": sheet["truncated"],
+                    "row_limit": sheet["row_limit"]
+                }
+                for sheet in sheets_data
+            ]
+            result["truncated"] = any(sheet["truncated"] for sheet in sheets_data)
+            result["insight_context"] = [
+                {
+                    "sheet_name": sheet["sheet_name"],
+                    **sheet["insight_context"],
+                }
+                for sheet in sheets_data
+            ]
+            if result["truncated"]:
+                result["warning"] = (
+                    "At least one query exceeded the configured per-sheet Excel row limit. "
+                    "The workbook contains only the first row_limit rows for that sheet; the export is incomplete."
+                )
+        return result
 
     def reformulate_query_with_context(
         self,

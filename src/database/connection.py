@@ -353,19 +353,35 @@ class DatabaseConnection:
                 cursor = conn.cursor()
                 cursor.execute(query)
                 
-                if self.is_mysql:
-                    raw_rows = cursor.fetchmany(max_rows)
-                    # Serialize records
-                    rows = [{k: serialize_row_value(v) for k, v in row.items()} for row in raw_rows]
-                else:
-                    raw_rows = cursor.fetchmany(max_rows)
-                    col_names = [d[0] for d in cursor.description] if cursor.description else []
-                    rows = [{col_names[i]: serialize_row_value(row[i]) for i in range(len(col_names))} for row in raw_rows]
+                col_names = [d[0] for d in cursor.description] if cursor.description else []
+                rows = []
+                remaining = max(0, max_rows)
+                while remaining:
+                    batch = cursor.fetchmany(min(10_000, remaining))
+                    if not batch:
+                        break
+                    if self.is_mysql:
+                        rows.extend(
+                            {k: serialize_row_value(v) for k, v in row.items()}
+                            for row in batch
+                        )
+                    else:
+                        rows.extend(
+                            {col_names[i]: serialize_row_value(value) for i, value in enumerate(row)}
+                            for row in batch
+                        )
+                    remaining -= len(batch)
+
+                # Read one extra row to distinguish a complete result from a capped one.
+                truncated = bool(cursor.fetchmany(1))
 
             return {
                 "status": "success",
                 "row_count": len(rows),
-                "rows": rows
+                "rows": rows,
+                "truncated": truncated,
+                "row_limit": max_rows,
+                "columns": col_names
             }
         except Exception as e:
             return {

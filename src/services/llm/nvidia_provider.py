@@ -51,7 +51,7 @@ NVIDIA_TOOLS = [
         "type": "function",
         "function": {
             "name": "create_multi_sheet_excel",
-            "description": "Create a multi-tab Excel workbook on the user Desktop from SQL queries.",
+            "description": "Create a multi-tab Excel workbook on the user Desktop from SQL queries. Use required_fields to declare request-specific output columns that must contain real values; use row_grain and unique_by for row-level consistency checks.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -66,7 +66,10 @@ NVIDIA_TOOLS = [
                             "properties": {
                                 "sheet_name": {"type": "string"},
                                 "query": {"type": "string"},
-                                "theme_color": {"type": "string"}
+                                "theme_color": {"type": "string"},
+                                "row_grain": {"type": "string", "enum": ["entity", "detail", "aggregate"]},
+                                "unique_by": {"type": "array", "items": {"type": "string"}},
+                                "required_fields": {"type": "array", "items": {"type": "string"}}
                             },
                             "required": ["sheet_name", "query"]
                         }
@@ -88,7 +91,7 @@ def run_nvidia_react(
     """Runs the ReAct loop using NVIDIA NIM (OpenAI-compatible) API."""
     steps: List[AgentStep] = []
     last_sql_box = {"sql": None, "result": None}
-    excel_box = {"file_path": None, "file_name": None, "sheets": None}
+    excel_box = {"file_path": None, "file_name": None, "sheets": None, "insight_context": []}
     workflow_state = {
         "schema_has_columns": False,
         "query_attempted": False,
@@ -126,6 +129,7 @@ def run_nvidia_react(
     final_text = ""
     error_details = None
     continuation_attempts = 0
+    final_was_truncated = False
 
     for turn in range(max_turns):
         try:
@@ -143,6 +147,7 @@ def run_nvidia_react(
 
             if not tool_calls:
                 final_text = msg.content or ""
+                final_was_truncated = NarrativeService.response_was_truncated(response)
                 if not final_text and getattr(msg, "reasoning_content", None):
                     final_text = str(msg.reasoning_content)
                 workflow_needs_excel = (
@@ -236,6 +241,7 @@ def run_nvidia_react(
                         excel_box["file_path"] = res.get("file_path")
                         excel_box["file_name"] = res.get("file_name")
                         excel_box["sheets"] = res.get("sheets")
+                        excel_box["insight_context"] = res.get("insight_context", [])
                         step.observation = res
                     else:
                         step.is_error = True
@@ -279,8 +285,45 @@ def run_nvidia_react(
     last_sql = last_sql_box["sql"]
     last_result = last_sql_box["result"]
 
-    if not workflow_incomplete and ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
+    if not workflow_incomplete and not excel_box["file_path"] and ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
         final_text = NarrativeService.format_thai_narrative(user_question, last_sql or "", last_result)
+
+    if excel_box["file_path"] and not NarrativeService.is_complete_executive_answer(
+        final_text,
+        model_truncated=final_was_truncated,
+    ):
+        repair_prompt = NarrativeService.build_repair_prompt(
+            question=user_question,
+            file_name=excel_box["file_name"] or "รายงาน Excel",
+            insight_context=excel_box["insight_context"],
+            draft=final_text,
+        )
+        try:
+            repair_messages = messages + [{"role": "user", "content": repair_prompt}]
+            repair_response = client.chat.completions.create(
+                model=agent.model_name,
+                messages=repair_messages,
+                tools=NVIDIA_TOOLS,
+                tool_choice="none",
+                temperature=0.1,
+                max_tokens=1500,
+            )
+            repaired_text = repair_response.choices[0].message.content or ""
+            if NarrativeService.is_complete_executive_answer(
+                repaired_text,
+                model_truncated=NarrativeService.response_was_truncated(repair_response),
+            ):
+                final_text = repaired_text
+            else:
+                final_text = NarrativeService.format_export_fallback(
+                    excel_box["file_name"] or "รายงาน Excel",
+                    excel_box["insight_context"],
+                )
+        except Exception:
+            final_text = NarrativeService.format_export_fallback(
+                excel_box["file_name"] or "รายงาน Excel",
+                excel_box["insight_context"],
+            )
 
     return AgentRunResult(
         user_question=user_question,

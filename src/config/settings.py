@@ -70,7 +70,9 @@ class Config:
 
     # Agent Limits & Safety
     MAX_REACT_STEPS = int(os.getenv("MAX_REACT_STEPS", "6"))
-    MAX_RESULT_ROWS = int(os.getenv("MAX_RESULT_ROWS", "1000"))
+    # One worksheet has 1,048,576 rows; reserve one header row and one summary row.
+    EXCEL_MAX_DATA_ROWS = 1_048_574
+    MAX_RESULT_ROWS = min(int(os.getenv("MAX_RESULT_ROWS", str(EXCEL_MAX_DATA_ROWS))), EXCEL_MAX_DATA_ROWS)
     MAX_SQL_ROWS_RETURNED = MAX_RESULT_ROWS
     DEFAULT_ROW_LIMIT = int(os.getenv("DEFAULT_ROW_LIMIT", "1000"))
     SQL_TIMEOUT_SECONDS = int(float(os.getenv("QUERY_TIMEOUT_SECONDS", "5.0")))

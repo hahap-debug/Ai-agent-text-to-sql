@@ -74,7 +74,7 @@ def run_gemini_react(
             step_callback(step)
         return ret_msg
 
-    excel_box = {"file_path": None, "file_name": None, "sheets": None}
+    excel_box = {"file_path": None, "file_name": None, "sheets": None, "insight_context": []}
 
     def create_multi_sheet_excel(file_name: str, sheets: List[Dict[str, Any]]) -> str:
         workflow_state["excel_attempted"] = True
@@ -89,6 +89,7 @@ def run_gemini_react(
             excel_box["file_path"] = res.get("file_path")
             excel_box["file_name"] = res.get("file_name")
             excel_box["sheets"] = res.get("sheets")
+            excel_box["insight_context"] = res.get("insight_context", [])
             step.observation = res
             ret_msg = json.dumps(res, ensure_ascii=False) + "\n\n[SYSTEM DIRECTIVE: Excel created successfully. STOP calling any more tools and deliver your Final Answer in Thai immediately.]"
         else:
@@ -210,8 +211,44 @@ def run_gemini_react(
     last_sql = last_sql_box["sql"]
     last_result = last_sql_box["result"]
 
-    if not quota_exceeded and not workflow_incomplete and ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
+    if not quota_exceeded and not workflow_incomplete and not excel_box["file_path"] and ("สรุปผลลัพธ์สำคัญ" not in final_text or not final_text.strip()) and last_result:
         final_text = NarrativeService.format_thai_narrative(user_question, last_sql or "", last_result)
+
+    if excel_box["file_path"] and not NarrativeService.is_complete_executive_answer(
+        final_text,
+        model_truncated=NarrativeService.response_was_truncated(response),
+    ):
+        repair_prompt = NarrativeService.build_repair_prompt(
+            question=user_question,
+            file_name=excel_box["file_name"] or "รายงาน Excel",
+            insight_context=excel_box["insight_context"],
+            draft=final_text,
+        )
+        try:
+            repair_response = agent.gemini_client.models.generate_content(
+                model=agent.model_name,
+                contents=repair_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=NarrativeService.REPAIR_SYSTEM_PROMPT,
+                    temperature=0.1,
+                ),
+            )
+            repaired_text = getattr(repair_response, "text", "") or ""
+            if NarrativeService.is_complete_executive_answer(
+                repaired_text,
+                model_truncated=NarrativeService.response_was_truncated(repair_response),
+            ):
+                final_text = repaired_text
+            else:
+                final_text = NarrativeService.format_export_fallback(
+                    excel_box["file_name"] or "รายงาน Excel",
+                    excel_box["insight_context"],
+                )
+        except Exception:
+            final_text = NarrativeService.format_export_fallback(
+                excel_box["file_name"] or "รายงาน Excel",
+                excel_box["insight_context"],
+            )
 
     return AgentRunResult(
         user_question=user_question,

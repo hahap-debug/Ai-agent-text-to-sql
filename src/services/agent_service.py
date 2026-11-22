@@ -11,7 +11,6 @@ from src.services.sql_guard_service import SQLGuardService
 from src.services.narrative_service import NarrativeService
 from src.services.insight_context_service import InsightContextService
 from src.services.coreference_service import CoreferenceService
-from src.services.temporal_scope_service import TemporalScopeService
 from src.services.llm import (
     run_gemini_react,
     run_nvidia_react,
@@ -326,15 +325,6 @@ class AgentService:
         """
         Executes the ReAct loop for the given business question with Multi-Turn Context Memory & Coreference Resolution.
         """
-        temporal_clarification = TemporalScopeService.clarification_for(user_question)
-        if temporal_clarification:
-            return AgentRunResult(
-                user_question=user_question,
-                final_answer=temporal_clarification,
-                steps=[],
-                success=True,
-            )
-
         active_question = user_question
         expanded = None
 

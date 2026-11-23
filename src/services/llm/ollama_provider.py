@@ -191,7 +191,7 @@ def run_ollama_react(
                 elif fn_name == "create_multi_sheet_excel":
                     fname = fn_args.get("file_name", "Report.xlsx")
                     sheets_param = fn_args.get("sheets", [])
-                    excel_res = agent.create_multi_sheet_excel(fname, sheets_param)
+                    excel_res = agent.create_multi_sheet_excel(fname, sheets_param, user_question=user_question)
                     if excel_res.get("status") == "success":
                         excel_file_path = excel_res.get("file_path")
                         excel_file_name = excel_res.get("file_name")

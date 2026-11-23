@@ -9,8 +9,10 @@ from pathlib import Path
 import re
 from typing import List, Dict, Any, Optional
 import openpyxl
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.xml.constants import MAX_ROW
 
 
 THEME_PALETTES = {
@@ -104,6 +106,161 @@ class ExcelService:
         ]):
             return "#,##0"
         return None
+
+    @classmethod
+    def create_streaming_workbook(
+        cls,
+        file_name: str,
+        sheets: List[Dict[str, Any]],
+        target_dir: Optional[Path] = None,
+        max_data_rows: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Write row iterators directly to a write-only workbook and split at Excel's row limit."""
+        target_directory = target_dir or (Path.home() / "Desktop")
+        try:
+            target_directory.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            target_directory = Path("reports")
+            target_directory.mkdir(parents=True, exist_ok=True)
+
+        safe_filename = cls.sanitize_file_name(file_name)
+        file_path = target_directory / safe_filename
+        data_rows_per_sheet = MAX_ROW - 1 if max_data_rows is None else max_data_rows
+        if data_rows_per_sheet < 1:
+            raise ValueError("max_data_rows must be at least 1")
+
+        wb = openpyxl.Workbook(write_only=True)
+        used_sheet_names = set()
+        physical_sheet_names = []
+        sheet_results = []
+        total_rows = 0
+
+        thin_border = Border(
+            left=Side(style="thin", color="D9D9D9"),
+            right=Side(style="thin", color="D9D9D9"),
+            top=Side(style="thin", color="D9D9D9"),
+            bottom=Side(style="thin", color="D9D9D9"),
+        )
+
+        def unique_name(raw_name: str) -> str:
+            base_name = cls.sanitize_sheet_name(raw_name)
+            name = base_name
+            suffix_number = 2
+            while name in used_sheet_names:
+                suffix = f"_{suffix_number}"
+                name = f"{base_name[:31 - len(suffix)]}{suffix}"
+                suffix_number += 1
+            used_sheet_names.add(name)
+            return name
+
+        for sheet_index, sheet in enumerate(sheets, 1):
+            raw_title = sheet.get("sheet_name", f"Sheet{sheet_index}")
+            columns = list(sheet.get("columns") or [])
+            rows = iter(sheet.get("rows") or [])
+            theme_key = sheet.get("theme_color") or DEFAULT_PALETTE_ORDER[(sheet_index - 1) % len(DEFAULT_PALETTE_ORDER)]
+            palette = THEME_PALETTES.get(theme_key, THEME_PALETTES["navy"])
+            header_fill = PatternFill(start_color=palette["header_fill"], end_color=palette["header_fill"], fill_type="solid")
+            header_font = Font(name="Segoe UI", size=11, bold=True, color=palette["header_font"])
+            header_align = Alignment(horizontal="center", vertical="center", wrap_text=False)
+            data_font = Font(name="Segoe UI", size=10)
+            odd_fill = PatternFill(start_color=palette["zebra_fill"], end_color=palette["zebra_fill"], fill_type="solid")
+            even_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+            number_formats = {
+                index: cls.get_number_format(column, None)
+                for index, column in enumerate(columns, 1)
+            }
+            widths = [len(str(column)) for column in columns]
+
+            logical_row_count = 0
+            logical_sheet_names = []
+            logical_worksheets = []
+            current_ws = None
+            rows_in_current_sheet = 0
+
+            def start_part(part_number: int):
+                title = raw_title if part_number == 1 else f"{raw_title}_{part_number}"
+                worksheet = wb.create_sheet(title=unique_name(title))
+                worksheet.sheet_properties.tabColor = palette["tab_color"]
+                worksheet.freeze_panes = "A2"
+                header_cells = []
+                for index, column in enumerate(columns, 1):
+                    cell = WriteOnlyCell(worksheet, value=column)
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = header_align
+                    cell.border = thin_border
+                    header_cells.append(cell)
+                    widths[index - 1] = max(widths[index - 1], len(str(column)))
+                worksheet.append(header_cells)
+                logical_sheet_names.append(worksheet.title)
+                logical_worksheets.append(worksheet)
+                physical_sheet_names.append(worksheet.title)
+                return worksheet
+
+            current_ws = start_part(1)
+            for row in rows:
+                if rows_in_current_sheet >= data_rows_per_sheet:
+                    current_ws = start_part(len(logical_sheet_names) + 1)
+                    rows_in_current_sheet = 0
+
+                cells = []
+                row_fill = odd_fill if (logical_row_count % 2 == 0) else even_fill
+                for index, column in enumerate(columns, 1):
+                    value = row.get(column) if isinstance(row, dict) else (
+                        row[index - 1] if index - 1 < len(row) else None
+                    )
+                    if value is not None:
+                        widths[index - 1] = min(max(widths[index - 1], len(str(value))), 60)
+                    cell = WriteOnlyCell(current_ws, value=value)
+                    cell.font = data_font
+                    cell.fill = row_fill
+                    cell.border = thin_border
+                    if number_formats.get(index):
+                        cell.number_format = number_formats[index]
+                        cell.alignment = Alignment(horizontal="right", vertical="center")
+                    else:
+                        cell.alignment = Alignment(horizontal="left", vertical="center")
+                    cells.append(cell)
+                current_ws.append(cells)
+                logical_row_count += 1
+                rows_in_current_sheet += 1
+
+            for worksheet in logical_worksheets:
+                for index, width in enumerate(widths, 1):
+                    worksheet.column_dimensions[get_column_letter(index)].width = max(min(width + 4, 60), 14)
+
+            sheet_results.append({
+                "sheet_name": raw_title,
+                "sheet_names": logical_sheet_names,
+                "row_count": logical_row_count,
+                "truncated": False,
+                "row_limit": None,
+            })
+            total_rows += logical_row_count
+
+        if not sheets:
+            ws = wb.create_sheet(title="Empty")
+            physical_sheet_names.append(ws.title)
+
+        try:
+            wb.save(file_path)
+        except PermissionError:
+            fallback_dir = Path("reports")
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            file_path = fallback_dir / safe_filename
+            wb.save(file_path)
+
+        return {
+            "status": "success",
+            "file_path": str(file_path.resolve()),
+            "file_name": safe_filename,
+            "sheets": physical_sheet_names,
+            "sheet_results": sheet_results,
+            "total_sheets": len(physical_sheet_names),
+            "total_rows": total_rows,
+            "truncated": False,
+            "desktop_saved": str(file_path.resolve()),
+        }
 
     @classmethod
     def create_workbook(
@@ -274,7 +431,7 @@ class ExcelService:
             # Auto-fit column widths
             for col_idx, col_name in enumerate(columns, 1):
                 max_len = len(str(col_name))
-                for row in rows_data[:100]:  # sample up to 100 rows for speed
+                for row in rows_data:
                     val = row.get(col_name) if isinstance(row, dict) else (row[col_idx - 1] if col_idx - 1 < len(row) else None)
                     if val is not None:
                         val_str = str(val)

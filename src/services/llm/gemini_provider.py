@@ -84,7 +84,7 @@ def run_gemini_react(
             tool_name="create_multi_sheet_excel",
             parameters={"file_name": file_name, "sheets_count": len(sheets) if isinstance(sheets, list) else 0}
         )
-        res = agent.create_multi_sheet_excel(file_name, sheets)
+        res = agent.create_multi_sheet_excel(file_name, sheets, user_question=user_question)
         if res.get("status") == "success":
             excel_box["file_path"] = res.get("file_path")
             excel_box["file_name"] = res.get("file_name")

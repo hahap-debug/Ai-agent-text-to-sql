@@ -5,6 +5,7 @@ dynamic schema inspection, and safe read-only SQL execution.
 """
 
 from typing import List, Dict, Any, Optional, Tuple
+from contextlib import contextmanager
 import datetime
 from decimal import Decimal
 import pymysql
@@ -389,3 +390,37 @@ class DatabaseConnection:
                 "message": str(e),
                 "error_type": "DatabaseExecutionError"
             }
+
+    @contextmanager
+    def stream_read_only(self, query: str, batch_size: int = Config.SQL_FETCH_BATCH_SIZE):
+        """Yield query columns and a bounded-memory iterator without a total-row cap."""
+        validate_ast_safety(query, dialect="mysql" if self.is_mysql else "sqlite")
+        conn = self.get_connection()
+        cursor = None
+        try:
+            # SSCursor streams MySQL results instead of buffering the full result client-side.
+            cursor = conn.cursor(pymysql.cursors.SSDictCursor) if self.is_mysql else conn.cursor()
+            cursor.execute(query)
+            columns = [description[0] for description in cursor.description] if cursor.description else []
+
+            def iter_rows():
+                while True:
+                    batch = cursor.fetchmany(batch_size)
+                    if not batch:
+                        break
+                    for row in batch:
+                        if isinstance(row, dict):
+                            yield {key: serialize_row_value(value) for key, value in row.items()}
+                        else:
+                            yield {
+                                columns[index]: serialize_row_value(value)
+                                for index, value in enumerate(row)
+                            }
+
+            yield {"columns": columns, "rows": iter_rows()}
+        finally:
+            try:
+                if cursor is not None:
+                    cursor.close()
+            finally:
+                conn.close()

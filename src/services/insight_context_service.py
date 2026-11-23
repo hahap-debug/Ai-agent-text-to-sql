@@ -29,15 +29,17 @@ class InsightContextService:
         columns: List[str],
         truncated: bool = False,
         dialect: str = "mysql",
+        sampled: bool = False,
     ) -> Dict[str, Any]:
         rows = rows or []
         context: Dict[str, Any] = {
             "row_count": len(rows),
             "truncated": bool(truncated),
+            "sampled": bool(sampled),
             "evidence_type": "column_profile",
         }
 
-        if cls._is_aggregate_query(query, dialect) and len(rows) <= cls.MAX_AGGREGATE_ROWS:
+        if not sampled and cls._is_aggregate_query(query, dialect) and len(rows) <= cls.MAX_AGGREGATE_ROWS:
             grouped_rows = cls._safe_aggregate_rows(rows, columns)
             if grouped_rows:
                 context["evidence_type"] = "aggregate_rows"

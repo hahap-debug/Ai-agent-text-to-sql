@@ -6,6 +6,7 @@ Loads environment variables and sets database and LLM parameters.
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from openpyxl.xml.constants import MAX_ROW
 
 # Base directory (Project Root)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -70,10 +71,11 @@ class Config:
 
     # Agent Limits & Safety
     MAX_REACT_STEPS = int(os.getenv("MAX_REACT_STEPS", "6"))
-    # One worksheet has 1,048,576 rows; reserve one header row and one summary row.
-    EXCEL_MAX_DATA_ROWS = 1_048_574
+    # Derive the worksheet ceiling from openpyxl; reserve a header and summary row for capped chat results.
+    EXCEL_MAX_DATA_ROWS = MAX_ROW - 2
     MAX_RESULT_ROWS = min(int(os.getenv("MAX_RESULT_ROWS", str(EXCEL_MAX_DATA_ROWS))), EXCEL_MAX_DATA_ROWS)
     MAX_SQL_ROWS_RETURNED = MAX_RESULT_ROWS
+    SQL_FETCH_BATCH_SIZE = max(1, int(os.getenv("SQL_FETCH_BATCH_SIZE", "5000")))
     DEFAULT_ROW_LIMIT = int(os.getenv("DEFAULT_ROW_LIMIT", "1000"))
     SQL_TIMEOUT_SECONDS = int(float(os.getenv("QUERY_TIMEOUT_SECONDS", "5.0")))
 

@@ -132,16 +132,30 @@ class SQLGuardService:
     @staticmethod
     def sanitize_sql_limits(sql: str, question: str) -> str:
         """
-        Fixed Rule: หาก user ไม่ได้ใส่จำนวนหรือตัวเลขที่ต้องการระบุชัดเจน (เช่น 5 คน, Top 10, 3 อันดับ)
-        คำสั่ง SQL ต้อง return ข้อมูลทั้งหมด (ตัด LIMIT ออกอัตโนมัติ)
+        Remove model-added result limits unless the user explicitly requested a count.
+        Numbers used for dates or periods do not imply a requested result count.
         """
         if not sql:
             return sql
-        q_low = question.lower()
-        has_explicit_count = bool(re.search(r'\b\d+\b', q_low)) or any(w in q_low for w in ['อันดับ', 'top', 'คนแรก', 'ชิ้นแรก', 'รายการแรก'])
+        q_low = (question or "").casefold()
+        number = r"(?:\d+|หนึ่ง|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า|สิบ)"
+        count_unit = r"(?:อันดับ|คน|รายการ|ชิ้น|สินค้า|แบรนด์|แถว|items?|rows?|customers?|products?|brands?|orders?)"
+        explicit_count_patterns = (
+            rf"\b(?:top|limit|max|maximum)\s*{number}\b",
+            rf"\bfirst\s+{number}\s+{count_unit}\b",
+            rf"{number}\s*{count_unit}",
+            rf"{count_unit}\s*(?:แรก|สูงสุด)?\s*{number}",
+            rf"(?:แสดง|ขอ|ดู|เอา)\s*(?:ข้อมูล|รายการ)?\s*{number}(?:\s*{count_unit})?\s*(?:แรก|สูงสุด)?\s*$",
+        )
+        has_explicit_count = any(re.search(pattern, q_low) for pattern in explicit_count_patterns)
 
         if not has_explicit_count:
-            return re.sub(r'\s+LIMIT\s+\d+(\s*,\s*\d+)?\s*;?$', ';', sql.strip(), flags=re.IGNORECASE)
+            return re.sub(
+                r"\s+LIMIT\s+(?:\d+\s*,\s*)?\d+(?:\s+OFFSET\s+\d+)?\s*;?\s*$",
+                ";",
+                sql.strip(),
+                flags=re.IGNORECASE,
+            )
         return sql
 
 

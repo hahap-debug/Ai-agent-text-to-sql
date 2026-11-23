@@ -93,203 +93,173 @@ class AgentService:
     def create_multi_sheet_excel(
         self,
         file_name: str,
-        sheets: List[Dict[str, Any]]
+        sheets: List[Dict[str, Any]],
+        user_question: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Tool 3: Execute read-only SQL queries for each sheet and assemble an Excel workbook on the user's Desktop."""
+        """Stream complete read-only query results to a workbook without the chat result cap."""
         from src.services.excel_service import ExcelService
+        import json
+        import tempfile
+
         sheets_data = []
-        for s in sheets:
-            s_name = s.get("sheet_name", "Sheet")
-            query = s.get("query", "")
-            theme = s.get("theme_color")
-
-            clean_query = SQLGuardService.sanitize_sql_limits(query, s_name)
-            query_res = self.execute_sql(clean_query)
-            if query_res.get("status") != "success":
-                err_msg = query_res.get("message") or query_res.get("error") or "Unknown database error"
-                return {
-                    "status": "error",
-                    "error": f"Failed query on sheet '{s_name}': {err_msg}",
-                    "failed_query": clean_query
-                }
-
-            rows = query_res.get("rows", [])
-            columns = query_res.get("columns", [])
-            if not columns and rows and isinstance(rows[0], dict):
-                columns = list(rows[0].keys())
-
-            # Excel is a user-facing export: keep the fields explicitly selected by
-            # the query while applying the same unconditional secret redaction.
-            filtered_rows = SQLGuardService.filter_display_fields(
-                rows,
-                preserve_fields=columns,
-            )
-            visible_columns = SQLGuardService.filter_display_fields(
-                [{column: None for column in columns}],
-                preserve_fields=columns,
-            )[0].keys() if columns else []
-            visible_columns = list(visible_columns)
-
-            required_fields = s.get("required_fields") or []
-            if isinstance(required_fields, str):
-                required_fields = [required_fields]
-            if required_fields:
-                output_columns = {str(column).casefold(): column for column in columns}
-                resolved_required = [
-                    output_columns.get(str(field).casefold()) for field in required_fields
-                ]
-                missing_fields = [
-                    field for field, resolved in zip(required_fields, resolved_required)
-                    if resolved is None
-                ]
-                if missing_fields:
+        sheet_results = []
+        temp_files = []
+        try:
+            for sheet in sheets:
+                sheet_name = sheet.get("sheet_name", "Sheet")
+                query = sheet.get("query", "")
+                clean_query = SQLGuardService.sanitize_sql_limits(query, user_question or "")
+                required_fields = sheet.get("required_fields") or []
+                if isinstance(required_fields, str):
+                    required_fields = [required_fields]
+                row_grain = sheet.get("row_grain")
+                if row_grain is not None:
+                    row_grain = str(row_grain).strip().lower()
+                    if row_grain not in {"entity", "aggregate", "detail"}:
+                        return {"status": "error", "error": f"Sheet '{sheet_name}' has unsupported row_grain '{row_grain}'."}
+                unique_by = sheet.get("unique_by") or []
+                if isinstance(unique_by, str):
+                    unique_by = [unique_by]
+                if row_grain in {"entity", "aggregate"} and not unique_by:
                     return {
                         "status": "error",
-                        "error": (
-                            f"Sheet '{s_name}' declares required_fields={required_fields}, but the query "
-                            f"does not return: {missing_fields}. Select these fields with matching output aliases."
-                        )
+                        "error": f"Sheet '{sheet_name}' declares row_grain='{row_grain}' and requires unique_by.",
                     }
 
-                visible_column_names = {str(column).casefold() for column in visible_columns}
-                protected_required = [
-                    field for field, resolved in zip(required_fields, resolved_required)
-                    if resolved is not None and str(resolved).casefold() not in visible_column_names
-                ]
-                if protected_required:
-                    return {
-                        "status": "error",
-                        "error": (
-                            f"Sheet '{s_name}' marks protected fields as required: {protected_required}. "
-                            "Remove them from the report request."
-                        )
-                    }
+                spool = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
+                temp_files.append(spool)
+                sample_rows = []
+                row_count = 0
 
-                for row_index, row in enumerate(rows, start=1):
-                    empty_fields = [
-                        field for field, resolved in zip(required_fields, resolved_required)
-                        if row.get(resolved) is None
-                        or (isinstance(row.get(resolved), str) and not row.get(resolved).strip())
+                with self.db.stream_read_only(clean_query) as query_stream:
+                    columns = query_stream["columns"]
+                    visible_columns = SQLGuardService.filter_display_fields(
+                        [{column: None for column in columns}], preserve_fields=columns
+                    )[0].keys() if columns else []
+                    visible_columns = list(visible_columns)
+
+                    output_columns = {str(column).casefold(): column for column in columns}
+                    resolved_required = [
+                        output_columns.get(str(field).casefold()) for field in required_fields
                     ]
-                    if empty_fields:
+                    missing_fields = [
+                        field for field, resolved in zip(required_fields, resolved_required)
+                        if resolved is None
+                    ]
+                    if missing_fields:
                         return {
                             "status": "error",
                             "error": (
-                                f"Sheet '{s_name}' has missing required data in {empty_fields} "
-                                f"at data row {row_index}. Add query conditions to return only rows "
-                                "where these required fields have real values, or revise required_fields "
-                                "if those fields are optional for this request."
-                            )
+                                f"Sheet '{sheet_name}' declares required_fields={required_fields}, but the query "
+                                f"does not return: {missing_fields}. Select these fields with matching output aliases."
+                            ),
+                        }
+                    visible_names = {str(column).casefold() for column in visible_columns}
+                    protected_required = [
+                        field for field, resolved in zip(required_fields, resolved_required)
+                        if resolved is not None and str(resolved).casefold() not in visible_names
+                    ]
+                    if protected_required:
+                        return {"status": "error", "error": f"Sheet '{sheet_name}' requires protected fields: {protected_required}."}
+
+                    output_columns = {str(column).casefold(): column for column in visible_columns}
+                    resolved_keys = [output_columns.get(str(key).casefold()) for key in unique_by]
+                    missing_keys = [key for key, resolved in zip(unique_by, resolved_keys) if resolved is None]
+                    if missing_keys:
+                        return {
+                            "status": "error",
+                            "error": f"Sheet '{sheet_name}' declares unique_by={unique_by}, but the query omits {missing_keys}.",
                         }
 
-            row_grain = s.get("row_grain")
-            if row_grain is not None:
-                row_grain = str(row_grain).strip().lower()
-                if row_grain not in {"entity", "aggregate", "detail"}:
-                    return {
-                        "status": "error",
-                        "error": (
-                            f"Sheet '{s_name}' has unsupported row_grain '{row_grain}'. "
-                            "Use 'entity', 'aggregate', or 'detail'."
-                        )
-                    }
-            unique_by = s.get("unique_by") or []
-            if isinstance(unique_by, str):
-                unique_by = [unique_by]
-            if row_grain in {"entity", "aggregate"} and not unique_by:
-                return {
-                    "status": "error",
-                    "error": (
-                        f"Sheet '{s_name}' declares row_grain='{row_grain}' and must also declare "
-                        "unique_by with the entity key (for example ['user_id'])."
-                    )
-                }
-            if unique_by:
-                # Resolve declared keys against the query's output labels, case-insensitively.
-                # The model should use a SELECT alias when the source column is qualified.
-                output_columns = {str(column).casefold(): column for column in visible_columns}
-                resolved_keys = [output_columns.get(str(key).casefold()) for key in unique_by]
-                missing_keys = [key for key, resolved in zip(unique_by, resolved_keys) if resolved is None]
-                if missing_keys:
-                    return {
-                        "status": "error",
-                        "error": (
-                            f"Sheet '{s_name}' declares unique_by={unique_by}, but the query result "
-                            f"does not include those output columns: {missing_keys}. Select each key "
-                            "with a matching output alias and retry."
-                        )
-                    }
-                seen = set()
-                for row_index, row in enumerate(rows, start=1):
-                    key_value = tuple(row.get(key) for key in resolved_keys)
-                    null_count = sum(value is None for value in key_value)
-                    if null_count:
-                        if row_grain == "detail" and null_count == len(key_value):
-                            # An all-NULL child key is a valid unmatched row from a LEFT JOIN.
-                            continue
-                        return {
-                            "status": "error",
-                            "error": (
-                                f"Sheet '{s_name}' has an incomplete key from unique_by={unique_by} "
-                                f"at data row {row_index}. Entity and aggregate keys must be non-null; "
-                                "for a detail grain, all key columns may be NULL together for an unmatched LEFT JOIN row."
-                            )
-                        }
-                    if key_value in seen:
-                        return {
-                            "status": "error",
-                            "error": (
-                                f"Sheet '{s_name}' must contain one row per {', '.join(unique_by)}, "
-                                f"but a duplicate key was found at data row {row_index}. Check whether a JOIN is multiplying rows."
-                            )
-                        }
-                    seen.add(key_value)
+                    seen = set()
+                    for row_count, row in enumerate(query_stream["rows"], start=1):
+                        empty_fields = [
+                            field for field, resolved in zip(required_fields, resolved_required)
+                            if row.get(resolved) is None
+                            or (isinstance(row.get(resolved), str) and not row.get(resolved).strip())
+                        ]
+                        if empty_fields:
+                            return {
+                                "status": "error",
+                                "error": f"Sheet '{sheet_name}' has missing required data in {empty_fields} at data row {row_count}.",
+                            }
 
-            sheets_data.append({
-                "sheet_name": s_name,
-                "columns": visible_columns,
-                "rows": filtered_rows,
-                "theme_color": theme,
-                "row_count": len(filtered_rows),
-                "truncated": query_res.get("truncated", False),
-                "row_limit": query_res.get("row_limit"),
-                "insight_context": InsightContextService.build(
+                        if unique_by:
+                            key_value = tuple(row.get(key) for key in resolved_keys)
+                            null_count = sum(value is None for value in key_value)
+                            if null_count:
+                                if row_grain == "detail" and null_count == len(key_value):
+                                    pass
+                                else:
+                                    return {
+                                        "status": "error",
+                                        "error": f"Sheet '{sheet_name}' has an incomplete key from unique_by={unique_by} at data row {row_count}.",
+                                    }
+                            elif key_value in seen:
+                                return {
+                                    "status": "error",
+                                    "error": f"Sheet '{sheet_name}' found a duplicate key from unique_by={unique_by} at data row {row_count}.",
+                                }
+                            else:
+                                seen.add(key_value)
+
+                        filtered_row = SQLGuardService.filter_display_fields([row], preserve_fields=columns)[0]
+                        spool.write(json.dumps(filtered_row, ensure_ascii=False, default=str))
+                        spool.write("\n")
+                        if len(sample_rows) < InsightContextService.MAX_AGGREGATE_ROWS:
+                            sample_rows.append(filtered_row)
+
+                spool.flush()
+                spool.seek(0)
+
+                def iter_spooled_rows(file_obj=spool):
+                    for line in file_obj:
+                        if line.strip():
+                            yield json.loads(line)
+
+                sampled = row_count > len(sample_rows)
+                insight_context = InsightContextService.build(
                     query=clean_query,
-                    rows=filtered_rows,
+                    rows=sample_rows,
                     columns=visible_columns,
-                    truncated=query_res.get("truncated", False),
+                    sampled=sampled,
                     dialect="mysql" if self.is_mysql else "sqlite",
                 )
-            })
+                insight_context["row_count"] = row_count
+                if sampled:
+                    insight_context["sampled_row_count"] = len(sample_rows)
 
-        result = ExcelService.create_workbook(
-            file_name=file_name,
-            sheets=sheets_data
-        )
-        if result.get("status") == "success":
-            result["sheet_results"] = [
-                {
-                    "sheet_name": sheet["sheet_name"],
-                    "row_count": sheet["row_count"],
-                    "truncated": sheet["truncated"],
-                    "row_limit": sheet["row_limit"]
-                }
-                for sheet in sheets_data
-            ]
-            result["truncated"] = any(sheet["truncated"] for sheet in sheets_data)
-            result["insight_context"] = [
-                {
-                    "sheet_name": sheet["sheet_name"],
-                    **sheet["insight_context"],
-                }
-                for sheet in sheets_data
-            ]
-            if result["truncated"]:
-                result["warning"] = (
-                    "At least one query exceeded the configured per-sheet Excel row limit. "
-                    "The workbook contains only the first row_limit rows for that sheet; the export is incomplete."
-                )
-        return result
+                sheets_data.append({
+                    "sheet_name": sheet_name,
+                    "columns": visible_columns,
+                    "rows": iter_spooled_rows(),
+                    "theme_color": sheet.get("theme_color"),
+                })
+                sheet_results.append({
+                    "sheet_name": sheet_name,
+                    "row_count": row_count,
+                    "truncated": False,
+                    "row_limit": None,
+                    "insight_context": insight_context,
+                })
+
+            result = ExcelService.create_streaming_workbook(file_name=file_name, sheets=sheets_data)
+            if result.get("status") == "success":
+                writer_results = result.get("sheet_results", [])
+                result["sheet_results"] = [
+                    {**(writer_results[index] if index < len(writer_results) else {}), **sheet_result}
+                    for index, sheet_result in enumerate(sheet_results)
+                ]
+                result["insight_context"] = [
+                    {"sheet_name": sheet["sheet_name"], **sheet["insight_context"]}
+                    for sheet in sheet_results
+                ]
+            return result
+        except Exception as exc:
+            return {"status": "error", "error": str(exc)}
+        finally:
+            for temp_file in temp_files:
+                temp_file.close()
 
     def reformulate_query_with_context(
         self,
@@ -415,30 +385,19 @@ class AgentService:
         res.user_question = user_question
         res.expanded_question = expanded if (expanded and expanded != user_question) else None
 
-        # 100% Guaranteed Excel Export: Every query exports an Excel workbook to Desktop
-        if not getattr(res, "excel_file_path", None) and res.last_query_result and len(res.last_query_result) > 0:
-            from src.services.excel_service import ExcelService
+        # Retry workbook creation from the original query, not its capped chat observation.
+        if (
+            not getattr(res, "excel_file_path", None)
+            and res.last_executed_sql
+            and res.last_query_result is not None
+        ):
             import re
             clean_q = re.sub(r'[^a-zA-Z0-9_\s]', '', user_question).strip().replace(' ', '_')[:30]
             auto_fname = f"BI_Data_Report_{clean_q}.xlsx" if clean_q else "Executive_BI_Report.xlsx"
-            raw_rows = res.last_query_result
-            selected_columns = list(raw_rows[0].keys()) if raw_rows and isinstance(raw_rows[0], dict) else []
-            export_rows = SQLGuardService.filter_display_fields(
-                raw_rows,
-                preserve_fields=selected_columns,
-            )
-            export_columns = SQLGuardService.filter_display_fields(
-                [{column: None for column in selected_columns}],
-                preserve_fields=selected_columns,
-            )[0].keys() if selected_columns else []
-            excel_out = ExcelService.create_workbook(
+            excel_out = self.create_multi_sheet_excel(
                 file_name=auto_fname,
-                sheets=[{
-                    "sheet_name": "Data_Export",
-                    "columns": list(export_columns),
-                    "rows": export_rows,
-                    "theme_color": "navy"
-                }]
+                sheets=[{"sheet_name": "Data_Export", "query": res.last_executed_sql, "theme_color": "navy"}],
+                user_question=user_question,
             )
             if excel_out.get("status") == "success":
                 res.excel_file_path = excel_out.get("file_path")

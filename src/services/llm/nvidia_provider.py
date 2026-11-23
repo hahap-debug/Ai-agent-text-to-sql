@@ -236,7 +236,7 @@ def run_nvidia_react(
                     fname = fn_args.get("file_name", "report.xlsx")
                     sheets = fn_args.get("sheets", [])
                     workflow_state["excel_attempted"] = True
-                    res = agent.create_multi_sheet_excel(fname, sheets)
+                    res = agent.create_multi_sheet_excel(fname, sheets, user_question=user_question)
                     if res.get("status") == "success":
                         excel_box["file_path"] = res.get("file_path")
                         excel_box["file_name"] = res.get("file_name")
